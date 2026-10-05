@@ -1,0 +1,111 @@
+//! Built-in presets and JSON save/load.
+
+use crate::params::{
+    ColorMode, DeformKind, LaserParams, LengthUnit, MotionKind, Orientation, ProfileKind, SweepMode,
+};
+use std::path::PathBuf;
+
+pub fn builtin() -> Vec<(&'static str, LaserParams)> {
+    let base = LaserParams::default();
+
+    let mut sweep = base.clone();
+    sweep.motion.kind = MotionKind::Sweep;
+    sweep.motion.sweep_mode = SweepMode::Wrap;
+    sweep.motion.speed_px_s = 300.0;
+    sweep.line.length = 100.0;
+
+    let mut vertical_sine = base.clone();
+    vertical_sine.line.orientation = Orientation::Vertical;
+    vertical_sine.color.wavelength_nm = 520.0;
+    vertical_sine.motion.kind = MotionKind::Sine;
+    vertical_sine.motion.amplitude_px = 200.0;
+    vertical_sine.motion.frequency_hz = 0.5;
+
+    let mut step = base.clone();
+    step.deform.kind = DeformKind::Box;
+    step.deform.height_px = -80.0;
+    step.deform.width_px = 300.0;
+    step.deform.slope_px = 30.0;
+    step.deform.scroll_px_s = 150.0;
+    step.line.length = 100.0;
+    step.profile.end_softness_px = 0.0;
+
+    let mut realistic = base.clone();
+    realistic.color.wavelength_nm = 405.0;
+    realistic.line.intensity_pct = 85.0;
+    realistic.line.width_px = 4.0;
+    realistic.noise.ambient_pct = 4.0;
+    realistic.noise.speckle_pct = 60.0;
+    realistic.noise.grain_px = 1.5;
+    realistic.noise.noise_pct = 1.5;
+    realistic.deform.kind = DeformKind::Sine;
+    realistic.deform.amplitude_px = 15.0;
+    realistic.deform.wavelength_px = 400.0;
+
+    let mut hard = base.clone();
+    hard.profile.kind = ProfileKind::Hard;
+    hard.profile.end_softness_px = 0.0;
+    hard.line.width_px = 1.0;
+    hard.line.length = 1000.0;
+    hard.line.length_unit = LengthUnit::Pixels;
+    hard.color.mode = ColorMode::Custom;
+
+    vec![
+        ("Static red Gaussian", base),
+        ("Sweep scan", sweep),
+        ("Vertical green oscillation", vertical_sine),
+        ("Object passing (box)", step),
+        ("Realistic blue + speckle", realistic),
+        ("1 px hard white line", hard),
+    ]
+}
+
+pub fn to_json(p: &LaserParams) -> Result<String, String> {
+    serde_json::to_string_pretty(p).map_err(|e| e.to_string())
+}
+
+pub fn from_json(s: &str) -> Result<LaserParams, String> {
+    serde_json::from_str(s).map_err(|e| e.to_string())
+}
+
+fn dialog() -> rfd::FileDialog {
+    rfd::FileDialog::new().add_filter("Laser preset", &["json"])
+}
+
+/// Returns `Ok(None)` if the user cancelled.
+pub fn save_dialog(p: &LaserParams) -> Result<Option<PathBuf>, String> {
+    let Some(path) = dialog().set_file_name("laser_preset.json").save_file() else {
+        return Ok(None);
+    };
+    std::fs::write(&path, to_json(p)?).map_err(|e| format!("{}: {e}", path.display()))?;
+    Ok(Some(path))
+}
+
+/// Returns `Ok(None)` if the user cancelled.
+pub fn load_dialog() -> Result<Option<(LaserParams, PathBuf)>, String> {
+    let Some(path) = dialog().pick_file() else {
+        return Ok(None);
+    };
+    let text = std::fs::read_to_string(&path).map_err(|e| format!("{}: {e}", path.display()))?;
+    Ok(Some((from_json(&text)?, path)))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn json_round_trip() {
+        for (_, p) in builtin() {
+            assert_eq!(from_json(&to_json(&p).unwrap()).unwrap(), p);
+        }
+    }
+
+    #[test]
+    fn partial_json_uses_defaults() {
+        let p = from_json(r#"{"line": {"width_px": 3.5}}"#).unwrap();
+        assert_eq!(p.line.width_px, 3.5);
+        assert_eq!(p.line.intensity_pct, 100.0);
+        assert_eq!(p.motion, LaserParams::default().motion);
+    }
+}
