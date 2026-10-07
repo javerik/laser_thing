@@ -20,6 +20,7 @@ pub struct SliceWorker {
 }
 
 impl SliceWorker {
+    /// Runs `req` on a new thread, cancelling the running slice.
     pub fn spawn(&mut self, req: SliceRequest) {
         self.cancel();
         let cancel = Arc::new(AtomicBool::new(false));
@@ -35,6 +36,7 @@ impl SliceWorker {
         self.job = Some(Job { id, cancel, progress, rx });
     }
 
+    /// Cancels the running slice, if any.
     pub fn cancel(&mut self) {
         if let Some(job) = self.job.take() {
             job.cancel.store(true, Ordering::Relaxed);

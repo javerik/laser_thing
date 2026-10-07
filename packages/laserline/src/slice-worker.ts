@@ -11,7 +11,9 @@ import type { FromWorker, ToWorker } from './protocol.js';
 
 /** The parts of a worker's global scope used here. */
 export interface WorkerScope {
+  /** Sends a message to the page. */
   postMessage(message: FromWorker, transfer?: Transferable[]): void;
+  /** Receives messages from the page. */
   addEventListener(type: 'message', listener: (event: MessageEvent<ToWorker>) => void): void;
 }
 

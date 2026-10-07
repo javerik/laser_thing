@@ -70,6 +70,19 @@ describe('LaserlineStore', () => {
     expect(s.params().line.width_px).toBe(6);
   });
 
+  it('runs shortcut actions', async () => {
+    const s = await store();
+    expect(s.dispatch('togglePlay')).toBe(true);
+    expect(s.playing()).toBe(false);
+    s.dispatch('toggleSlicer');
+    expect(s.slicerOpen()).toBe(true);
+    s.dispatch('toggleControlsHidden');
+    expect(s.controls()).toBe('hidden');
+    s.dispatch('toggleControlsHidden');
+    expect(s.controls()).toBe('docked');
+    expect(s.dispatch('exitFullscreen')).toBe(false);
+  });
+
   it('reports unreadable scan files', async () => {
     const s = await store();
     await s.loadScan(new File([new Uint8Array([1, 2, 3])], 'broken.lscan'));
@@ -179,7 +192,7 @@ describe('LaserlineStore windows', () => {
     });
   });
 
-  describe('slicer window', () => {
+  describe('slicer and controls windows', () => {
     /** A same-origin window stand-in with its own document. */
     function fakePopup() {
       const doc = document.implementation.createHTMLDocument('');
@@ -231,7 +244,25 @@ describe('LaserlineStore windows', () => {
       expect(s.slicerWindow()).toBeUndefined();
     });
 
-    it('stays in the page when the pop-up is blocked', async () => {
+    it('detaches, hides and docks the controls', async () => {
+      const s = await store();
+      const win = fakePopup();
+      expect(s.dispatch('toggleControlsDetached')).toBe(true);
+      expect(s.controls()).toBe('detached');
+      expect(s.controlsWindow()).toBe(win);
+      s.dispatch('toggleControlsHidden');
+      expect(s.controls()).toBe('hidden');
+      expect(win.close).toHaveBeenCalled();
+      expect(s.controlsWindow()).toBeUndefined();
+      const again = fakePopup();
+      s.dispatch('toggleControlsHidden');
+      expect(s.controls()).toBe('detached');
+      expect(s.controlsWindow()).toBe(again);
+      again.close();
+      expect(s.controls()).toBe('docked');
+    });
+
+        it('stays in the page when the pop-up is blocked', async () => {
       const s = await store();
       vi.spyOn(window, 'open').mockReturnValue(null);
       s.detachSlicer();

@@ -10,6 +10,7 @@ const DEFORM_WIDTH: u32 = 1024;
 const DEFORM_ROWS: u32 = DEFORM_SAMPLES as u32 / DEFORM_WIDTH;
 const _: () = assert!((DEFORM_SAMPLES as u32).is_multiple_of(DEFORM_WIDTH));
 
+/// Draws the emulated laser line over its whole render pass.
 pub struct LaserRenderer {
     pipeline: wgpu::RenderPipeline,
     bind_group: wgpu::BindGroup,

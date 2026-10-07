@@ -6,7 +6,8 @@
  *   {@link DetachedLaserView}: the same in a window of its own,
  * - `Slicer` + `MeshView` + {@link SliceRunner}: STL import, slicing in a Web
  *   Worker and the 3D preview,
- * - `Scan`, `Mesh`, presets and plot helpers.
+ * - `Scan`, `Mesh`, presets and plot helpers,
+ * - {@link actionForKey}: the keyboard shortcuts shared with the desktop app.
  */
 import initWasm from '../wasm/laserline.js';
 import type { InitInput, LaserParams, LiveInfo, SliceSettings } from '../wasm/laserline.js';
@@ -19,6 +20,7 @@ export { readFileBytes, downloadBytes } from './files.js';
 export { SliceWorkerClient, type SliceResult } from './slice-client.js';
 export type { FromWorker, ToWorker } from './protocol.js';
 export { SliceRunner } from './slice-runner.js';
+export { type Action, type Shortcut, SHORTCUTS, actionForKey, shortcutHelp } from './keys.js';
 
 /** `T` with all fields required, recursively (generated types mark defaulted fields optional). */
 export type DeepRequired<T> = T extends readonly unknown[]

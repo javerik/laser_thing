@@ -17,24 +17,36 @@ use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 
 /// One profile maps onto the line's deformation buffer, so wider grids add nothing.
 pub const MAX_COLS: usize = crate::DEFORM_SAMPLES;
+/// Most profiles a slice may produce.
 pub const MAX_ROWS: usize = 20_000;
 
+/// Model axis and direction that points up (towards the sensor).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "wasm", derive(tsify::Tsify))]
 pub enum UpAxis {
+    /// +x is up.
     PosX,
+    /// −x is up.
     NegX,
+    /// +y is up.
     PosY,
+    /// −y is up.
     NegY,
+    /// +z is up.
     PosZ,
+    /// −z is up.
     NegZ,
 }
 
+/// A model axis.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "wasm", derive(tsify::Tsify))]
 pub enum Axis {
+    /// The x axis.
     X,
+    /// The y axis.
     Y,
+    /// The z axis.
     Z,
 }
 
@@ -42,13 +54,18 @@ pub enum Axis {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "wasm", derive(tsify::Tsify))]
 pub enum ModelUnit {
+    /// Millimetres.
     Mm,
+    /// Centimetres.
     Cm,
+    /// Metres.
     M,
+    /// Inches.
     Inch,
 }
 
 impl ModelUnit {
+    /// Millimetres per unit.
     pub fn mm(self) -> f32 {
         match self {
             ModelUnit::Mm => 1.0,
@@ -70,6 +87,7 @@ pub enum CameraSide {
 }
 
 impl CameraSide {
+    /// +1 for `Ahead`, −1 for `Behind`.
     pub fn sign(self) -> isize {
         match self {
             CameraSide::Ahead => 1,
@@ -78,6 +96,7 @@ impl CameraSide {
     }
 }
 
+/// How a mesh is placed on the conveyor and sampled into a scan.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "wasm", derive(tsify::Tsify))]
 #[serde(default)]
@@ -90,6 +109,7 @@ pub struct SliceSettings {
     pub flip_along: bool,
     /// Rotation of the object about the up axis, in degrees.
     pub yaw_deg: f32,
+    /// Unit of the model coordinates.
     pub unit: ModelUnit,
     /// Extra uniform scale on top of the unit conversion.
     pub scale: f32,
@@ -107,6 +127,7 @@ pub struct SliceSettings {
     pub occlusion: bool,
     /// Angle between camera axis and laser plane in degrees.
     pub triangulation_deg: f32,
+    /// Side of the laser plane the camera looks from.
     pub camera_side: CameraSide,
 }
 
@@ -146,18 +167,28 @@ impl SliceSettings {
 pub struct ScanMeta {
     /// File name of the model the scan was sliced from.
     pub source: String,
+    /// Settings the scan was sliced with.
     pub settings: SliceSettings,
+    /// Samples per profile.
     pub cols: usize,
+    /// Number of profiles.
     pub rows: usize,
+    /// Position of the first sample along the line in mm.
     pub u0_mm: f32,
+    /// Sample spacing along the line in mm.
     pub du_mm: f32,
+    /// Travel position of the first profile in mm.
     pub v0_mm: f32,
+    /// Spacing between profiles in mm.
     pub dv_mm: f32,
+    /// Highest surface point in mm.
     pub z_max_mm: f32,
 }
 
+/// A sliced scan: a `rows × cols` height grid, one profile per travel step.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Scan {
+    /// Grid layout and origin.
     pub meta: ScanMeta,
     /// Row-major heights in mm; NaN where the laser hits nothing.
     pub height: Vec<f32>,
@@ -166,18 +197,20 @@ pub struct Scan {
 }
 
 impl Scan {
+    /// Heights of profile `j` in mm (NaN = nothing hit). Panics if `j >= rows`.
     pub fn row_height(&self, j: usize) -> &[f32] {
         let c = self.meta.cols;
         &self.height[j * c..(j + 1) * c]
     }
 
+    /// Visibility of profile `j` (1 = seen by the camera). Panics if `j >= rows`.
     pub fn row_visible(&self, j: usize) -> &[u8] {
         let c = self.meta.cols;
         &self.visible[j * c..(j + 1) * c]
     }
 
-    /// Height where the camera sees the laser, NaN otherwise.
-    #[cfg(test)]
+    /// Height in mm of cell (`i` along the line, `j` = row) where the camera sees the
+    /// laser, NaN otherwise.
     pub fn seen(&self, i: usize, j: usize) -> f32 {
         let k = j * self.meta.cols + i;
         if self.visible[k] != 0 { self.height[k] } else { f32::NAN }
@@ -193,6 +226,7 @@ impl Scan {
         (self.meta.rows.max(2) - 1) as f32 * self.meta.dv_mm
     }
 
+    /// Position of the grid center along the line in mm.
     pub fn u_center_mm(&self) -> f32 {
         self.meta.u0_mm + 0.5 * self.width_mm()
     }
@@ -253,7 +287,7 @@ pub fn slice(mesh: &Mesh, s: &SliceSettings, source: &str, cancel: &AtomicBool, 
     slice_observed(mesh, s, source, &Atomics(cancel, progress))
 }
 
-/// [`slice`] with progress and cancellation going through `observer`.
+/// [`slice()`] with progress and cancellation going through `observer`.
 pub fn slice_observed(mesh: &Mesh, s: &SliceSettings, source: &str, observer: &dyn SliceObserver) -> Result<Scan, String> {
     let pts = mesh::to_scan_frame(mesh, s);
     let (lo, hi) = mesh::bounds(&pts);

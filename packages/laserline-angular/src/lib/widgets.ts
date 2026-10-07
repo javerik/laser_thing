@@ -127,10 +127,15 @@ export function fromPosition(pos: number, min: number, max: number, log: boolean
   return log && min > 0 ? min * Math.pow(max / min, t) : min + (max - min) * t;
 }
 
+/** One option of `<ll-choice>`. */
 export interface Choice<T> {
+  /** Value selected by the option. */
   value: T;
+  /** Button text. */
   label: string;
+  /** Tooltip. */
   title?: string;
+  /** Shown but not selectable. */
   disabled?: boolean;
 }
 

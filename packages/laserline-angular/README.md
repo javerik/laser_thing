@@ -59,6 +59,25 @@ the slicer back into the page:
 
 Laserline views inside such windows render through an `OffscreenCanvas` automatically.
 
+The controls follow the same pattern: `store.controls()` is `'docked'`, `'detached'`
+(render them into `store.controlsWindow()` with `<ll-window-portal>`) or `'hidden'`;
+`store.toggleControlsDetached()` and `store.toggleControlsHidden()` switch it.
+
+Keyboard shortcuts, shared with the desktop app, take one line:
+
+```ts
+import { actionForKey } from '@javerik/laserline';
+
+@HostListener('document:keydown', ['$event'])
+key(e: KeyboardEvent) {
+  const action = actionForKey(e);
+  if (action && this.store.dispatch(action)) e.preventDefault();
+}
+```
+
+The layout is not persisted: windows can only be opened from a user action, so a page
+always starts docked.
+
 Smaller pieces (`ll-laser-canvas`, `ll-line-controls`, `ll-mesh-view`, `ll-range-image`,
 `ll-slider`, …) and the `LaserlineStore` are exported for custom layouts.
 

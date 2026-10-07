@@ -76,15 +76,20 @@ fn rgba(c: [u8; 3], a: f32) -> [f32; 4] {
 /// Text placed at a 3D position of the preview.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Label {
+    /// Anchor in scan-frame mm.
     pub pos: Vec3,
+    /// Text to show.
     pub text: &'static str,
+    /// sRGB, 0..255.
     pub color: [u8; 3],
 }
 
 /// Overlay geometry plus the labels to draw over it.
 #[derive(Clone, Debug, Default)]
 pub struct OverlayWithLabels {
+    /// Lines and translucent triangles.
     pub overlay: Overlay,
+    /// Labels at 3D positions.
     pub labels: Vec<Label>,
 }
 
@@ -173,8 +178,11 @@ pub fn build_overlay(scan: Option<&Scan>, row: usize, s: &SliceSettings, lo: Vec
 /// RGBA8 image, row-major from the top left.
 #[derive(Clone, Debug, PartialEq)]
 pub struct RgbaImage {
+    /// Width in px.
     pub width: usize,
+    /// Height in px.
     pub height: usize,
+    /// `width × height` RGBA pixels, 4 bytes each.
     pub pixels: Vec<u8>,
 }
 
@@ -211,6 +219,7 @@ pub fn range_image(scan: &Scan) -> RgbaImage {
 /// A run of neighbouring profile samples with the same visibility.
 #[derive(Clone, Debug, PartialEq)]
 pub struct ProfileRun {
+    /// The camera sees these samples.
     pub visible: bool,
     /// `(column, height mm)` pairs.
     pub points: Vec<[f32; 2]>,

@@ -384,6 +384,7 @@ pub fn profile_plot(ui: &mut Ui, scan: &Scan, row: usize, height: f32) {
     );
 }
 
+/// Source, grid size and extent of `scan`.
 pub fn scan_summary(ui: &mut Ui, scan: &Scan) {
     let m = &scan.meta;
     ui.label(RichText::new(if m.source.is_empty() { "Scan" } else { &m.source }).strong());

@@ -205,6 +205,7 @@ impl MeshView {
         MeshView { target, renderer }
     }
 
+    /// `"WebGPU"` or `"WebGL2"`.
     #[wasm_bindgen(getter)]
     pub fn backend(&self) -> String {
         self.target.backend()

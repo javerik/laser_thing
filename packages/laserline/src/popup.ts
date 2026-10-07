@@ -1,6 +1,8 @@
+/** Options of {@link openPopup}. */
 export interface PopupOptions {
   /** Window name; opening another popup with the same name reuses that window. */
   name: string;
+  /** Document title of the window. */
   title: string;
   /** `window.open` features (default: a 1280×720 popup). */
   features?: string;
@@ -34,9 +36,11 @@ export function openPopup(options: PopupOptions): Window | undefined {
  * be drawn from here. Render into {@link offscreen}, then call {@link present}.
  */
 export class CanvasBridge {
+  /** Canvas to render into; same size as the target canvas at construction. */
   readonly offscreen: OffscreenCanvas;
   private readonly output: ImageBitmapRenderingContext;
 
+  /** Throws if `canvas` offers no `bitmaprenderer` context. */
   constructor(canvas: HTMLCanvasElement) {
     const output = canvas.getContext('bitmaprenderer');
     if (!output) throw new Error('canvas offers no bitmaprenderer context');

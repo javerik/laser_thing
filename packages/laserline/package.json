@@ -40,7 +40,7 @@
   "scripts": {
     "build:wasm": "../../scripts/build-wasm.sh",
     "build": "tsc -p tsconfig.json",
-    "test": "node --test test/",
+    "test": "node --test test/ && node scripts/check-dts-docs.mjs",
     "prepack": "npm run build"
   },
   "devDependencies": {

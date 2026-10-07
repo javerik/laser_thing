@@ -1,8 +1,11 @@
-import { Scan, type SliceRequest } from '../wasm/laserline.js';
+import { Scan, constants, type SliceRequest } from '../wasm/laserline.js';
 import type { FromWorker, ToWorker } from './protocol.js';
 
+/** Outcome of a slice run by {@link SliceWorkerClient}. */
 export interface SliceResult {
+  /** The sliced scan; free it when no longer needed. */
   scan: Scan;
+  /** Seconds the slice took in the worker. */
   durationS: number;
 }
 
@@ -38,6 +41,7 @@ export class SliceWorkerClient {
     this.model = { id: modelId, bytes };
   }
 
+  /** A slice is running. */
   get busy(): boolean {
     return this.pending !== undefined;
   }
@@ -57,7 +61,7 @@ export class SliceWorkerClient {
     });
   }
 
-  /** Stops the running slice; its promise rejects with `Error('cancelled')`. */
+  /** Stops the running slice; its promise rejects with `Error(constants().cancelled)`. */
   cancel(): void {
     const p = this.pending;
     if (!p) return;
@@ -65,9 +69,10 @@ export class SliceWorkerClient {
     this.worker?.terminate();
     this.worker = undefined;
     this.workerModel = undefined;
-    p.reject(new Error('cancelled'));
+    p.reject(new Error(constants().cancelled));
   }
 
+  /** Cancels the running slice and terminates the worker. */
   dispose(): void {
     this.cancel();
     this.worker?.terminate();

@@ -11,11 +11,13 @@ export type FrameScheduler = Pick<Window, 'requestAnimationFrame' | 'cancelAnima
 export class AnimationLoop {
   private handle = 0;
 
+  /** `frame` receives the seconds since the previous frame, at most 0.25. */
   constructor(
     private readonly frame: (dt: number) => void,
     private win: FrameScheduler = globalThis as unknown as FrameScheduler,
   ) {}
 
+  /** Frames are being requested. */
   get running(): boolean {
     return this.handle !== 0;
   }
@@ -32,6 +34,7 @@ export class AnimationLoop {
     if (running) this.start();
   }
 
+  /** Starts requesting frames; no-op if running. The first frame gets `dt = 0`. */
   start(): void {
     if (this.handle) return;
     const win = this.win;
@@ -47,6 +50,7 @@ export class AnimationLoop {
     this.handle = win.requestAnimationFrame(step);
   }
 
+  /** Stops requesting frames. */
   stop(): void {
     try {
       this.win.cancelAnimationFrame(this.handle);

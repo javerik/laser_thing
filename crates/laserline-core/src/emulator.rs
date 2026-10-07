@@ -13,10 +13,13 @@ use std::sync::Arc;
 #[derive(Clone, Copy, Debug, Default, PartialEq, Serialize)]
 #[cfg_attr(feature = "wasm", derive(tsify::Tsify))]
 pub struct LiveInfo {
+    /// View size in px.
     pub view_px: [f32; 2],
     /// Line center relative to the view origin.
     pub center_px: [f32; 2],
+    /// Current motion offset perpendicular to the line in px.
     pub offset_px: f32,
+    /// Drawn line length in px.
     pub length_px: f32,
     /// View extent along the line direction (basis for % lengths).
     pub extent_along_px: f32,
@@ -27,16 +30,22 @@ pub struct LiveInfo {
 /// Everything a renderer needs to draw one frame of the line.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Frame {
+    /// Shader uniforms of the line.
     pub uniforms: Uniforms,
     /// Fresh deformation samples as `(displacement px, intensity)`, `DEFORM_SAMPLES`
     /// long, or `None` when the line is undeformed.
     pub deform: Option<Vec<[f32; 2]>>,
+    /// Measurements for readouts.
     pub info: LiveInfo,
 }
 
+/// Simulation clock, scan playback and line parameters; produces a [`Frame`] per
+/// displayed frame.
 #[derive(Clone, Debug)]
 pub struct Emulator {
+    /// Line parameters.
     pub params: LaserParams,
+    /// The clock and scan playback advance in [`Emulator::tick`].
     pub playing: bool,
     /// Simulated seconds, advanced by `tick` scaled with `params.time_scale`.
     pub sim_time: f64,
@@ -57,6 +66,7 @@ impl Default for Emulator {
 }
 
 impl Emulator {
+    /// Playing, at time 0, without a scan.
     pub fn new(params: LaserParams) -> Self {
         Self { params, playing: true, sim_time: 0.0, fps: 0.0, scan: None, pos: 0.0, frame_counter: 0 }
     }
@@ -95,6 +105,7 @@ impl Emulator {
         self.pos = row as f64;
     }
 
+    /// Rewinds the clock and the scan playback.
     pub fn reset_time(&mut self) {
         self.sim_time = 0.0;
         self.pos = 0.0;

@@ -30,9 +30,11 @@ pub struct OpenedFile {
     pub name: String,
     /// Full path or URL, for messages.
     pub location: String,
+    /// File content.
     pub bytes: Vec<u8>,
 }
 
+/// File dialogs and storage of the host application.
 pub trait FileHost {
     /// Asks the user for a file of `kind`; `Ok(None)` if they cancelled.
     fn open(&mut self, kind: FileKind) -> Result<Option<OpenedFile>, String>;

@@ -3,7 +3,7 @@
 //!
 //! Running a slice is left to the host (a thread natively, a Web Worker in the
 //! browser): [`Slicer::start`] and [`Slicer::poll`] hand out a [`SliceRequest`] to run
-//! with [`crate::scan::slice`], and the host reports the outcome with
+//! with [`crate::scan::slice()`], and the host reports the outcome with
 //! [`Slicer::finish`]. A newer request supersedes older ones; the host should cancel
 //! those, and their late results are ignored.
 
@@ -21,8 +21,10 @@ pub const DEBOUNCE_S: f64 = 0.3;
 /// Error text of a slice stopped through its cancel flag.
 pub const CANCELLED: &str = "cancelled";
 
+/// A model loaded into the [`Slicer`].
 #[derive(Clone, Debug)]
 pub struct Model {
+    /// The parsed mesh.
     pub mesh: Arc<Mesh>,
     /// Short name (file name), stored in the scans as their source.
     pub name: String,
@@ -43,11 +45,15 @@ impl Model {
 /// A slice the host should run: `scan::slice(&mesh, &settings, &name, ..)`.
 #[derive(Clone, Debug)]
 pub struct SliceRequest {
+    /// Request id, passed back to [`Slicer::finish`].
     pub id: u64,
     /// [`Model::id`] of the model to slice.
     pub model_id: u64,
+    /// Mesh to slice.
     pub mesh: Arc<Mesh>,
+    /// Settings to slice with.
     pub settings: SliceSettings,
+    /// Model name, stored as the scan's source.
     pub name: String,
 }
 
@@ -60,19 +66,24 @@ enum PreviewKey {
     Scan(usize),
 }
 
+/// Geometry of the 3D preview: the model in the scan frame, or a scan's surface.
 #[derive(Clone, Debug)]
 pub struct Preview {
     key: PreviewKey,
+    /// Triangles in scan-frame mm.
     pub mesh: Arc<GpuMesh>,
     /// Bounds of the preview geometry in scan-frame mm.
     pub bounds: (Vec3, Vec3),
 }
 
+/// Interactive slicer state, see the module docs.
 #[derive(Clone, Debug)]
 pub struct Slicer {
+    /// Settings of the next slice.
     pub settings: SliceSettings,
     /// Re-slice automatically when settings change.
     pub auto: bool,
+    /// The loaded model.
     pub model: Option<Model>,
     /// Id of the request currently running.
     running: Option<u64>,
@@ -80,6 +91,7 @@ pub struct Slicer {
     sliced: Option<SliceSettings>,
     /// Settings waiting for the debounce, and since when (host seconds).
     pending: Option<(SliceSettings, f64)>,
+    /// Error of the last slice, if it failed (not set for cancelled slices).
     pub error: Option<String>,
     /// Seconds the last successful slice took.
     pub last_duration_s: Option<f64>,
@@ -90,6 +102,7 @@ pub struct Slicer {
 }
 
 impl Slicer {
+    /// No model; `auto` turns on automatic re-slicing.
     pub fn new(settings: SliceSettings, auto: bool) -> Self {
         Self {
             settings,
@@ -106,6 +119,7 @@ impl Slicer {
         }
     }
 
+    /// A slice is running.
     pub fn is_busy(&self) -> bool {
         self.running.is_some()
     }
@@ -196,6 +210,7 @@ impl Slicer {
         None
     }
 
+    /// The preview built by the last [`Slicer::update_preview`].
     pub fn preview(&self) -> Option<&Preview> {
         self.preview.as_ref()
     }
@@ -238,8 +253,11 @@ impl Slicer {
 /// Scene of the slicer's 3D view for one frame.
 #[derive(Clone, Debug)]
 pub struct View3d {
+    /// Model or scan surface, if any.
     pub mesh: Option<Arc<GpuMesh>>,
+    /// Conveyor, laser plane, camera and profile lines with their labels.
     pub overlay: viz::OverlayWithLabels,
+    /// Camera to draw with.
     pub camera: OrbitCamera,
     /// Highest point of the scene, for the height tint.
     pub z_max: f32,

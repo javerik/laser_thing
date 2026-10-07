@@ -10,7 +10,9 @@ export class SliceRunner {
   progress: number | undefined;
   private job: number | undefined;
 
+  /** `onScan` receives each current scan; it owns it and must free it. */
   constructor(
+    /** The slicer whose requests are run. */
     readonly slicer: Slicer,
     private readonly client: SliceWorkerClient,
     private readonly onScan: (scan: Scan) => void,
@@ -40,6 +42,7 @@ export class SliceRunner {
     if (request) this.run(request);
   }
 
+  /** Stops the running slice; the slicer records it as cancelled, not as an error. */
   cancel(): void {
     this.client.cancel();
     this.job = undefined;

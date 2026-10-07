@@ -1,5 +1,6 @@
 import { InjectionToken } from '@angular/core';
 
+/** Configuration passed to `provideLaserline()`. */
 export interface LaserlineConfig {
   /**
    * URL of `laserline_bg.wasm`. Copy it from `node_modules/@javerik/laserline/wasm/`
@@ -19,4 +20,5 @@ export interface LaserlineConfig {
   storagePrefix?: string | null;
 }
 
+/** Injection token of the {@link LaserlineConfig}. */
 export const LASERLINE_CONFIG = new InjectionToken<LaserlineConfig>('LASERLINE_CONFIG');

@@ -2,6 +2,7 @@
 //! detached; window management stays with the application.
 
 use crate::files::{FileHost, FileKind, OpenedFile};
+use crate::layout::{Action, Layout};
 use crate::callbacks::{self, LaserCallback};
 use crate::slicer_ui::{profile_plot, scan_summary};
 use crate::worker::SliceWorker;
@@ -19,17 +20,22 @@ use laserline_core::{mesh, presets, scan_file};
 use std::sync::Arc;
 
 const WAVELENGTH_PRESETS: [f32; 5] = [405.0, 450.0, 520.0, 635.0, 660.0];
+/// Longest frame step in seconds [`LaserUi::begin_frame`] passes on.
+pub const MAX_FRAME_DT: f64 = 0.25;
 /// How long a status message stays visible, in seconds.
 const STATUS_S: f64 = 5.0;
 
 /// The emulator with its slicer and everything the panels show.
 pub struct LaserUi {
+    /// The emulator shown in the live view.
     pub emu: Emulator,
+    /// The slicer behind the slicer panels.
     pub slicer: Slicer,
     /// The slicer window / panel is shown.
     pub slicer_open: bool,
     /// Measured while drawing the last live view.
     pub live: LiveInfo,
+    /// Built-in preset selected in the presets combo box.
     pub preset_index: usize,
     status: Option<(String, f64)>,
     now: f64,
@@ -60,13 +66,16 @@ impl LaserUi {
         }
     }
 
+    /// The render target encodes sRGB itself.
     pub fn srgb_target(&self) -> bool {
         self.srgb_target
     }
 
     /// Call once per displayed frame, before drawing: collects finished slices,
-    /// starts due re-slices and advances the emulator by `dt` seconds.
+    /// starts due re-slices and advances the emulator by `dt` seconds (clamped to
+    /// [`MAX_FRAME_DT`], so a stalled window does not jump ahead).
     pub fn begin_frame(&mut self, ctx: &egui::Context, dt: f64) {
+        let dt = dt.clamp(0.0, MAX_FRAME_DT);
         self.now = ctx.input(|i| i.time);
         if let Some(scan) = self.worker.poll(&mut self.slicer, self.now) {
             self.emu.set_scan(scan);
@@ -74,6 +83,7 @@ impl LaserUi {
         self.emu.tick(dt);
     }
 
+    /// Shows `msg` in the status line for a few seconds.
     pub fn set_status(&mut self, msg: impl Into<String>) {
         self.status = Some((msg.into(), self.now));
     }
@@ -129,6 +139,7 @@ impl LaserUi {
         self.emu.set_scan(scan);
     }
 
+    /// Asks for an STL file and loads it into the slicer.
     pub fn import_stl(&mut self, files: &mut dyn FileHost) {
         let result = files.open(FileKind::Stl).and_then(|f| f.map_or(Ok(()), |f| self.open_model(f)));
         if let Err(e) = result {
@@ -136,6 +147,7 @@ impl LaserUi {
         }
     }
 
+    /// Asks for an `.lscan` file and plays it.
     pub fn load_scan(&mut self, files: &mut dyn FileHost) {
         let result = files.open(FileKind::Scan).and_then(|f| f.map_or(Ok(()), |f| self.open_scan(f)));
         if let Err(e) = result {
@@ -143,6 +155,7 @@ impl LaserUi {
         }
     }
 
+    /// Asks where to save the scan being played.
     pub fn save_scan(&mut self, files: &mut dyn FileHost) {
         let Some(scan) = &self.emu.scan else { return };
         let result = scan_file::to_bytes(scan).and_then(|b| files.save(FileKind::Scan, &scan_file::file_name(scan), &b));
@@ -153,16 +166,35 @@ impl LaserUi {
         }
     }
 
-    /// Handles the playback keys (Space, R, ←, →); returns whether `key` was one.
-    pub fn handle_key(&mut self, key: egui::Key) -> bool {
-        match key {
-            egui::Key::Space => self.emu.playing = !self.emu.playing,
-            egui::Key::R => self.emu.reset_time(),
-            egui::Key::ArrowLeft => self.emu.step_scan(-1),
-            egui::Key::ArrowRight => self.emu.step_scan(1),
-            _ => return false,
+    /// Runs `action`, changing `layout` for the window actions. Returns `Some(on)` when
+    /// the live view's window should enter or leave fullscreen; the host sends that to
+    /// the window and mirrors the result in [`Layout::fullscreen`].
+    pub fn apply(&mut self, action: Action, layout: &mut Layout) -> Option<bool> {
+        match action {
+            Action::TogglePlay => self.emu.playing = !self.emu.playing,
+            Action::ResetTime => self.emu.reset_time(),
+            Action::StepBack => self.emu.step_scan(-1),
+            Action::StepForward => self.emu.step_scan(1),
+            Action::ToggleFullscreen => return Some(!layout.fullscreen),
+            Action::ExitFullscreen => return layout.fullscreen.then_some(false),
+            Action::ToggleControlsDetached => layout.toggle_controls_detached(),
+            Action::ToggleViewDetached => return layout.toggle_view_detached().then_some(false),
+            Action::ToggleControlsHidden => layout.toggle_controls_hidden(),
+            Action::ToggleSlicer => self.slicer_open = !self.slicer_open,
         }
-        true
+        None
+    }
+
+    /// Handles the playback keys (Space, R, ←, →); returns whether `key` was one.
+    /// Hosts with window actions use [`Action::from_key`] and [`LaserUi::apply`] instead.
+    pub fn handle_key(&mut self, key: egui::Key) -> bool {
+        match Action::from_key(key, egui::Modifiers::NONE) {
+            Some(a @ (Action::TogglePlay | Action::ResetTime | Action::StepBack | Action::StepForward)) => {
+                self.apply(a, &mut Layout::default());
+                true
+            }
+            _ => false,
+        }
     }
 
     /// Draws the laser line into `rect` and records the measurements in `self.live`.
@@ -216,6 +248,7 @@ impl LaserUi {
         self.readout_ui(ui);
     }
 
+    /// Play/pause, reset, time scale and frame-rate readout.
     pub fn transport_ui(&mut self, ui: &mut Ui) {
         let emu = &mut self.emu;
         ui.horizontal(|ui| {
@@ -241,6 +274,7 @@ impl LaserUi {
         });
     }
 
+    /// Built-in presets, defaults, preset files.
     pub fn presets_ui(&mut self, ui: &mut Ui, files: &mut dyn FileHost) {
         let builtin = presets::builtin();
         ui.horizontal(|ui| {
@@ -296,6 +330,7 @@ impl LaserUi {
         }
     }
 
+    /// Scan playback: import, load, save and the playback parameters.
     pub fn object_scan_ui(&mut self, ui: &mut Ui, files: &mut dyn FileHost) {
         ui.horizontal_wrapped(|ui| {
             if ui.button("📂 Import STL…").clicked() {
@@ -351,6 +386,7 @@ impl LaserUi {
         });
     }
 
+    /// Measurements of the last live frame.
     pub fn readout_ui(&self, ui: &mut Ui) {
         let l = &self.live;
         egui::Grid::new("readout").num_columns(2).show(ui, |ui| {
@@ -386,16 +422,19 @@ pub fn section<T: Default>(ui: &mut Ui, title: &str, open: bool, value: &mut T, 
         });
 }
 
+/// Two-column label/widget grid with id `id`.
 pub fn grid(ui: &mut Ui, id: &str, body: impl FnOnce(&mut Ui)) {
     egui::Grid::new(id).num_columns(2).spacing([10.0, 6.0]).show(ui, body);
 }
 
+/// One labelled row of a [`grid`].
 pub fn row(ui: &mut Ui, label: &str, widget: impl FnOnce(&mut Ui)) {
     ui.label(label);
     widget(ui);
     ui.end_row();
 }
 
+/// Editor of the line parameters; `extent_along` is the view extent along the line in px.
 pub fn line_ui(ui: &mut Ui, l: &mut LineParams, extent_along: f32) {
     grid(ui, "line_grid", |ui| {
         row(ui, "Intensity", |ui| {
@@ -460,6 +499,7 @@ pub fn line_ui(ui: &mut Ui, l: &mut LineParams, extent_along: f32) {
     });
 }
 
+/// Editor of the cross-section with its plot; `width` is the line width in px.
 pub fn profile_ui(ui: &mut Ui, p: &mut ProfileParams, width: f32) {
     ui.horizontal(|ui| {
         ui.selectable_value(&mut p.kind, ProfileKind::Gaussian, "Gaussian");
@@ -482,6 +522,7 @@ pub fn profile_ui(ui: &mut Ui, p: &mut ProfileParams, width: f32) {
     plot(ui, -half, half, 0.0, 1.0, |v| model::profile_intensity(p, width, v), "cross-section");
 }
 
+/// Editor of the line colour.
 pub fn color_ui(ui: &mut Ui, c: &mut ColorParams) {
     ui.horizontal(|ui| {
         ui.selectable_value(&mut c.mode, ColorMode::Wavelength, "Wavelength");
@@ -516,6 +557,7 @@ pub fn color_ui(ui: &mut Ui, c: &mut ColorParams) {
     }
 }
 
+/// Editor of the movement; `offset` is the current offset in px, for the readout.
 pub fn motion_ui(ui: &mut Ui, m: &mut MotionParams, offset: f32) {
     ui.horizontal(|ui| {
         ui.selectable_value(&mut m.kind, MotionKind::Static, "Static");
@@ -557,6 +599,7 @@ pub fn motion_ui(ui: &mut Ui, m: &mut MotionParams, offset: f32) {
     }
 }
 
+/// Editor of the deformation with its plot over `length_px` at time `t` s.
 pub fn deform_ui(ui: &mut Ui, d: &mut DeformParams, length_px: f32, t: f64) {
     ui.horizontal_wrapped(|ui| {
         ui.selectable_value(&mut d.kind, DeformKind::None, "None");
@@ -694,6 +737,7 @@ pub fn scan_params_ui(ui: &mut Ui, s: &mut ScanParams, live: Option<DisplayMappi
     });
 }
 
+/// Editor of the noise.
 pub fn noise_ui(ui: &mut Ui, n: &mut NoiseParams) {
     grid(ui, "noise_grid", |ui| {
         row(ui, "Ambient light", |ui| {

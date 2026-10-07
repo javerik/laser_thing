@@ -7,9 +7,12 @@
 use crate::scan::{SliceSettings, UpAxis};
 use std::collections::HashMap;
 
+/// Indexed triangle mesh in model units.
 #[derive(Clone, Debug, Default)]
 pub struct Mesh {
+    /// Distinct vertex positions.
     pub vertices: Vec<[f32; 3]>,
+    /// Triangles as indices into `vertices`.
     pub triangles: Vec<[u32; 3]>,
 }
 
@@ -20,6 +23,7 @@ impl Mesh {
     }
 }
 
+/// Axis-aligned bounds `(min, max)` of `points`; zeros when empty.
 pub fn bounds(points: &[[f32; 3]]) -> ([f32; 3], [f32; 3]) {
     if points.is_empty() {
         return ([0.0; 3], [0.0; 3]);

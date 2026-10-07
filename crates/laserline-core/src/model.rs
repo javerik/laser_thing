@@ -132,6 +132,7 @@ pub fn wavelength_to_rgb(nm: f32) -> [f32; 3] {
     if max > 0.0 { [r / max, g / max, b / max] } else { [0.0; 3] }
 }
 
+/// Linear RGB (0..1) of the line for `c`.
 pub fn laser_rgb(c: &ColorParams) -> [f32; 3] {
     match c.mode {
         ColorMode::Wavelength => wavelength_to_rgb(c.wavelength_nm),

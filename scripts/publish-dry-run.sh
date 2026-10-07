@@ -16,6 +16,11 @@ for p in packages/laserline packages/laserline-angular; do
     fi
 done
 
+echo "== API docs"
+# Every public item is documented (missing_docs) and README examples compile.
+RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps --lib
+cargo test --workspace --doc
+
 echo "== crates.io"
 cargo publish --dry-run --workspace "$@"
 

@@ -1,5 +1,6 @@
 import { Injectable, NgZone, OnDestroy, effect, inject, signal, untracked } from '@angular/core';
 import {
+  type Action,
   AnimationLoop,
   DetachedLaserView,
   Emulator,
@@ -35,6 +36,10 @@ const READOUT_MS = 100;
 /** Settings are written to localStorage at most this often. */
 const PERSIST_MS = 300;
 
+/** Where the controls are shown; see {@link LaserlineStore.controls}. */
+export type ControlsPlacement = 'docked' | 'detached' | 'hidden';
+
+/** Snapshot of the slicer for display; see {@link LaserlineStore.slicer}. */
 export interface SlicerState {
   busy: boolean;
   /** Progress 0..1 of the running slice. */
@@ -94,17 +99,25 @@ export class LaserlineStore implements OnDestroy {
   /** Why loading failed. */
   readonly loadError = signal<string | undefined>(undefined);
 
+  /** Line parameters; change them with `setParams` / `patchParams`. */
   readonly params = signal<FullLaserParams>(undefined as unknown as FullLaserParams);
+  /** The simulation runs. */
   readonly playing = signal(true);
+  /** Simulated seconds. */
   readonly simTime = signal(0);
+  /** Measured display frame rate. */
   readonly fps = signal(0);
   /** Measurements of the last rendered live view. */
   readonly live = signal<FullLiveInfo>(NO_LIVE);
+  /** The scan being played, owned by the store. */
   readonly scan = signal<Scan | undefined>(undefined);
   /** Profile currently shown. */
   readonly row = signal(0);
+  /** Settings of the next slice; change them with `setSliceSettings`. */
   readonly sliceSettings = signal<FullSliceSettings>(undefined as unknown as FullSliceSettings);
+  /** Re-slice automatically when the settings change. */
   readonly sliceAuto = signal(true);
+  /** Slicer state for display. */
   readonly slicer = signal<SlicerState>(IDLE);
   /** The slicer panel is shown. */
   readonly slicerOpen = signal(false);
@@ -113,7 +126,9 @@ export class LaserlineStore implements OnDestroy {
    * slicer there with `<ll-window-portal>`.
    */
   readonly slicerWindow = signal<Window | undefined>(undefined);
+  /** Latest status message, cleared after a few seconds. */
   readonly status = signal<string | undefined>(undefined);
+  /** The built-in presets. */
   readonly presets = signal<Preset[]>([]);
   /** Graphics API of the first view, e.g. "WebGL2". */
   readonly backend = signal<string | undefined>(undefined);
@@ -124,6 +139,14 @@ export class LaserlineStore implements OnDestroy {
   readonly viewDetached = signal(false);
   /** The window showing the live view (this page or the detached one) is fullscreen. */
   readonly fullscreen = signal(false);
+  /**
+   * Where the controls are: in the page, in a window of their own (render them there with
+   * `<ll-window-portal [window]="store.controlsWindow()">`) or hidden. The host app
+   * lays out the page accordingly.
+   */
+  readonly controls = signal<ControlsPlacement>('docked');
+  /** The window the controls are shown in while `controls()` is `'detached'`. */
+  readonly controlsWindow = signal<Window | undefined>(undefined);
   /** A slicing worker is configured. */
   readonly canSlice = !!this.config.createWorker;
 
@@ -140,7 +163,7 @@ export class LaserlineStore implements OnDestroy {
     // A hidden window gets no animation frames: follow one being looked at, preferring
     // the live view's.
     const shown = (w: Window | undefined) => !!w && !w.closed && w.document.visibilityState === 'visible';
-    const candidates = [popup?.visible ? popup.window : undefined, window, this.slicerWindow()];
+    const candidates = [popup?.visible ? popup.window : undefined, window, this.slicerWindow(), this.controlsWindow()];
     this.loop.setWindow(candidates.find(shown) ?? window);
     this.fullscreen.set(popup ? popup.fullscreen : !!document.fullscreenElement);
   };
@@ -172,6 +195,7 @@ export class LaserlineStore implements OnDestroy {
     document.removeEventListener('visibilitychange', this.syncWindows);
     this.dockView();
     this.dockSlicer();
+    this.closeControlsWindow();
     this.loop.stop();
     this.client?.dispose();
     clearTimeout(this.statusTimer);
@@ -331,6 +355,7 @@ export class LaserlineStore implements OnDestroy {
     this.syncWindows();
   }
 
+  /** Detaches or docks the live view (call it from a user action). */
   toggleViewDetached(): void {
     if (this.detached) this.dockView();
     else this.detachView();
@@ -382,45 +407,168 @@ export class LaserlineStore implements OnDestroy {
     this.syncWindows();
   }
 
+  /** Moves the slicer between this page and a window of its own. */
   toggleSlicerDetached(): void {
     if (this.slicerWindow()) this.dockSlicer();
     else this.detachSlicer();
   }
 
+  /** Opens or closes the slicer. */
+  toggleSlicer(): void {
+    this.slicerOpen.update((open) => !open);
+  }
+
+  // ---- controls placement
+
+  private controlsBeforeHide: Exclude<ControlsPlacement, 'hidden'> = 'docked';
+
+  /**
+   * Shows the controls in a window of their own (call it from a user action, like
+   * `detachView()`). Closing that window docks them again.
+   */
+  detachControls(): void {
+    if (this.controlsWindow() || !this.ready()) return;
+    const win = openPopup({ name: 'laserline-controls', title: 'Laser Controls', features: 'popup,width=420,height=800' });
+    if (!win) {
+      this.setStatus('Allow pop-ups for this page to open the controls in their own window');
+      return;
+    }
+    win.addEventListener('pagehide', () => {
+      if (this.controlsWindow() !== win) return;
+      this.controlsWindow.set(undefined);
+      this.controls.set('docked');
+      this.syncWindows();
+    });
+    win.addEventListener('keydown', forwardKey);
+    win.document.addEventListener('visibilitychange', this.syncWindows);
+    this.controlsWindow.set(win);
+    this.controls.set('detached');
+    this.syncWindows();
+  }
+
+  /** Shows the controls in the page, closing their window. */
+  dockControls(): void {
+    this.closeControlsWindow();
+    this.controls.set('docked');
+  }
+
+  /** Detaches docked controls; docks detached or hidden ones. */
+  toggleControlsDetached(): void {
+    if (this.controls() === 'docked') this.detachControls();
+    else this.dockControls();
+  }
+
+  /** Hides the controls, or shows them where they were before (call it from a user action). */
+  toggleControlsHidden(): void {
+    const placement = this.controls();
+    if (placement !== 'hidden') {
+      this.controlsBeforeHide = placement;
+      this.closeControlsWindow();
+      this.controls.set('hidden');
+    } else if (this.controlsBeforeHide === 'detached') {
+      this.controls.set('docked');
+      this.detachControls();
+    } else {
+      this.controls.set('docked');
+    }
+  }
+
+  private closeControlsWindow(): void {
+    const win = this.controlsWindow();
+    if (!win) return;
+    this.controlsWindow.set(undefined);
+    win.close();
+    this.syncWindows();
+  }
+
+  // ---- shortcuts
+
+  /**
+   * Runs a shortcut action (see `actionForKey` in `@javerik/laserline`). Returns false
+   * if it did nothing, e.g. `'exitFullscreen'` while not fullscreen or before the
+   * module is loaded, so the key's default can go ahead. Call it from the key event:
+   * window actions open pop-ups.
+   */
+  dispatch(action: Action): boolean {
+    if (!this.ready()) return false;
+    switch (action) {
+      case 'togglePlay':
+        this.togglePlaying();
+        break;
+      case 'resetTime':
+        this.resetTime();
+        break;
+      case 'stepBack':
+        this.stepScan(-1);
+        break;
+      case 'stepForward':
+        this.stepScan(1);
+        break;
+      case 'toggleFullscreen':
+        this.toggleFullscreen();
+        break;
+      case 'exitFullscreen':
+        if (!this.fullscreen()) return false;
+        this.toggleFullscreen();
+        break;
+      case 'toggleControlsDetached':
+        this.toggleControlsDetached();
+        break;
+      case 'toggleViewDetached':
+        this.toggleViewDetached();
+        break;
+      case 'toggleControlsHidden':
+        this.toggleControlsHidden();
+        break;
+      case 'toggleSlicer':
+        this.toggleSlicer();
+        break;
+    }
+    return true;
+  }
+
   // ---- 3D view camera
 
+  /** Rotates the 3D view by a pointer drag in CSS pixels. */
   orbit(dx: number, dy: number): void {
     this.slicerCore?.orbit(dx, dy);
   }
 
+  /** Pans the 3D view by a pointer drag in CSS pixels. */
   pan(dx: number, dy: number): void {
     this.slicerCore?.pan(dx, dy);
   }
 
+  /** Zooms the 3D view: `scroll` in pixels (positive = closer), `pinch` factor (> 1 = closer). */
   zoom(scroll: number, pinch = 1): void {
     this.slicerCore?.zoom(scroll, pinch);
   }
 
+  /** Reframes the 3D view on the next render. */
   resetCamera(): void {
     this.slicerCore?.resetCamera();
   }
 
   // ---- parameters and playback
 
+  /** Replaces all line parameters and persists them. */
   setParams(params: FullLaserParams): void {
     this.emu!.params = params;
     this.params.set(params);
     this.schedulePersist();
   }
 
+  /** Replaces some sections of the line parameters. */
   patchParams(patch: Partial<FullLaserParams>): void {
     this.setParams({ ...this.params(), ...patch });
   }
 
+  /** Pauses or resumes the simulation. */
   togglePlaying(): void {
     this.setPlaying(!this.playing());
   }
 
+  /** Pauses (false) or resumes (true) the simulation. */
   setPlaying(playing: boolean): void {
     this.emu!.playing = playing;
     this.playing.set(playing);
@@ -432,11 +580,13 @@ export class LaserlineStore implements OnDestroy {
     this.syncPlayback();
   }
 
+  /** Shows the profile `delta` rows away from the current one. */
   stepScan(delta: number): void {
     this.emu!.stepScan(delta);
     this.syncPlayback();
   }
 
+  /** Jumps to profile `row`. */
   seekRow(row: number): void {
     this.emu!.seekRow(row);
     this.syncPlayback();
@@ -447,6 +597,7 @@ export class LaserlineStore implements OnDestroy {
     this.simTime.set(this.emu!.simTime);
   }
 
+  /** Applies built-in preset `index` and rewinds the clock. */
   applyPreset(index: number): void {
     const preset = this.presets()[index];
     if (!preset) return;
@@ -460,16 +611,19 @@ export class LaserlineStore implements OnDestroy {
     return defaultParams() as FullLaserParams;
   }
 
+  /** Resets all line parameters to their defaults. */
   resetParams(): void {
     this.setParams(defaultParams() as FullLaserParams);
     this.setStatus('All parameters reset');
   }
 
+  /** Downloads the parameters as `laser_preset.json`. */
   savePreset(): void {
     downloadBytes(presetToJson(this.params()), 'laser_preset.json', 'application/json');
     this.setStatus('Saved laser_preset.json');
   }
 
+  /** Loads parameters from a preset file; errors go to `status`. */
   async loadPreset(file: File): Promise<void> {
     try {
       this.setParams(presetFromJson(await file.text()) as FullLaserParams);
@@ -489,6 +643,7 @@ export class LaserlineStore implements OnDestroy {
     else this.setStatus(`${file.name}: expected an .stl or .lscan file`);
   }
 
+  /** Loads an STL model into the slicer and opens it; errors go to `status`. */
   async importStl(file: File): Promise<void> {
     if (!this.runner) {
       this.setStatus('Import failed: no slicing worker configured');
@@ -520,6 +675,7 @@ export class LaserlineStore implements OnDestroy {
     this.refreshSlicer();
   }
 
+  /** Downloads the scan being played as an `.lscan` file. */
   saveScan(): void {
     const scan = this.scan();
     if (!scan) return;
@@ -537,6 +693,7 @@ export class LaserlineStore implements OnDestroy {
     this.row.set(this.emu!.currentRow);
   }
 
+  /** Replaces the slice settings and persists them. */
   setSliceSettings(settings: FullSliceSettings): void {
     this.slicerCore!.settings = settings;
     this.sliceSettings.set(settings);
@@ -544,16 +701,19 @@ export class LaserlineStore implements OnDestroy {
     this.refreshSlicer();
   }
 
+  /** Resets the slice settings to their defaults. */
   resetSliceSettings(): void {
     this.setSliceSettings(defaultSliceSettings() as FullSliceSettings);
   }
 
+  /** Turns automatic re-slicing on or off. */
   setSliceAuto(auto: boolean): void {
     this.slicerCore!.auto = auto;
     this.sliceAuto.set(auto);
     this.schedulePersist();
   }
 
+  /** Slices with the current settings now. */
   sliceNow(): void {
     this.runner?.sliceNow();
     this.refreshSlicer();
@@ -561,6 +721,7 @@ export class LaserlineStore implements OnDestroy {
 
   // ---- status and persistence
 
+  /** Shows `msg` in `status` for a few seconds. */
   setStatus(msg: string): void {
     clearTimeout(this.statusTimer);
     this.status.set(msg);

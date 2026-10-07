@@ -18,6 +18,7 @@ pub fn install(rs: &egui_wgpu::RenderState) {
 
 /// Per-frame draw request for the laser line.
 pub struct LaserCallback {
+    /// Shader input of the frame (`Emulator::frame`).
     pub uniforms: Uniforms,
     /// Fresh deformation samples, if any.
     pub deform: Option<Vec<[f32; 2]>>,
@@ -47,11 +48,15 @@ impl egui_wgpu::CallbackTrait for LaserCallback {
 
 /// Per-frame draw request for the 3D preview.
 pub struct MeshViewCallback {
+    /// The object, if any.
     pub mesh: Option<Arc<GpuMesh>>,
+    /// Lines and quads drawn around the object.
     pub overlay: Arc<Overlay>,
+    /// Camera of the frame.
     pub uniforms: ViewUniforms,
     /// Size of the view in physical pixels.
     pub size_px: [u32; 2],
+    /// The paint target encodes sRGB itself.
     pub srgb_target: bool,
 }
 

@@ -8,9 +8,13 @@ use glam::{Mat4, Vec3};
 /// Turntable camera around a target point, z up.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct OrbitCamera {
+    /// Point the camera looks at and orbits around.
     pub target: Vec3,
+    /// Angle around z in radians.
     pub yaw: f32,
+    /// Elevation above the xy plane in radians.
     pub pitch: f32,
+    /// Distance from the target.
     pub distance: f32,
 }
 
@@ -21,12 +25,14 @@ impl OrbitCamera {
         Self { target: 0.5 * (lo + hi), yaw: -2.2, pitch: 0.55, distance: radius * 2.6 }
     }
 
+    /// Camera position.
     pub fn eye(&self) -> Vec3 {
         let (sy, cy) = self.yaw.sin_cos();
         let (sp, cp) = self.pitch.sin_cos();
         self.target + self.distance * Vec3::new(cp * cy, cp * sy, sp)
     }
 
+    /// View-projection matrix for a viewport of `aspect` = width / height (wgpu clip space).
     pub fn view_proj(&self, aspect: f32) -> Mat4 {
         let view = camera::view::look_at_mat4(self.eye(), self.target, Vec3::Z);
         let near = (self.distance * 0.01).max(0.01);
@@ -35,6 +41,7 @@ impl OrbitCamera {
         proj * view
     }
 
+    /// Shader uniforms; `z_max` is the height mapped to the top of the height tint.
     pub fn uniforms(&self, aspect: f32, z_max: f32) -> ViewUniforms {
         ViewUniforms {
             view_proj: self.view_proj(aspect).to_cols_array_2d(),

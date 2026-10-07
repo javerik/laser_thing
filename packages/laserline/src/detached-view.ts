@@ -1,6 +1,7 @@
 import { type Emulator, LaserView, type LiveInfo } from '../wasm/laserline.js';
 import { CanvasBridge, openPopup } from './popup.js';
 
+/** Options of {@link DetachedLaserView.open}. */
 export interface DetachedViewOptions {
   /** `"webgpu"`, `"webgl"` or `"auto"` (default). */
   backend?: string;
@@ -39,9 +40,10 @@ const STYLE = `
  * A live laser view in a window of its own (a popup), e.g. to put it fullscreen on a
  * projector while the page keeps the controls.
  *
- * The frames are rendered in this window and shown through a {@link CanvasBridge}. Call {@link render} every frame, and preferably drive the frames
- * from {@link window}'s animation frames while it is {@link visible}: a hidden page
- * gets none.
+ * Frames are rendered in this window and shown through a {@link CanvasBridge}. Call
+ * {@link DetachedLaserView.render} every frame, and drive the frames from
+ * {@link DetachedLaserView.window}'s animation frames while it is
+ * {@link DetachedLaserView.visible}: a hidden page gets none.
  */
 export class DetachedLaserView {
   /** Resolves once the view can render; rejects if no WebGPU or WebGL2 is available. */
@@ -123,6 +125,7 @@ export class DetachedLaserView {
     return !this.closed && !this.win.closed && this.win.document.visibilityState === 'visible';
   }
 
+  /** {@link DetachedLaserView.close} ran or the user closed the window. */
   get isClosed(): boolean {
     return this.closed;
   }
@@ -132,6 +135,7 @@ export class DetachedLaserView {
     return this.view?.backend;
   }
 
+  /** The window is fullscreen. */
   get fullscreen(): boolean {
     return !this.closed && !this.win.closed && !!this.win.document.fullscreenElement;
   }

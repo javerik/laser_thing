@@ -21,14 +21,25 @@ projector). Open it from a user action, render it every frame, and take the anim
 frames from the popup while it is visible:
 
 ```ts
-import { DetachedLaserView } from '@javerik/laserline';
+import { AnimationLoop, DetachedLaserView } from '@javerik/laserline';
 
+let detached: DetachedLaserView | undefined;
+const loop = new AnimationLoop((dt) => {
+  emulator.tick(dt);
+  if (detached) detached.render(emulator);
+  else view.render(emulator);
+});
 button.onclick = () => {
-  const detached = DetachedLaserView.open({ onClose: () => loop.setWindow(window) });
-  if (!detached) return; // pop-up blocked
-  loop.setWindow(detached.window);
-  // in the loop: detached.render(emulator); detached.close() to dock it again
+  detached = DetachedLaserView.open({
+    onClose: () => {
+      detached = undefined;
+      loop.setWindow(window);
+    },
+  });
+  if (detached) loop.setWindow(detached.window); // undefined: pop-up blocked
 };
+loop.start();
+// detached.close() docks it again (onClose is not called then)
 ```
 
 For other views in other windows, `openPopup()` opens an empty same-origin window and
@@ -52,8 +63,30 @@ runner.loadModel(stlBytes, 'part.stl');
 // every frame: runner.poll(performance.now() / 1000)
 ```
 
-Also: `MeshView` (3D preview), `Scan` (`.lscan` files, range image, profiles), presets
-and plot helpers. Parameter objects use the field names of the preset JSON files.
+Keyboard shortcuts are shared with the desktop app: `actionForKey(event)` returns an
+`Action` such as `'toggleFullscreen'`, `shortcutHelp()` the help line.
+
+## API
+
+Every export has TSDoc; this is the map. Parameter objects use the field names of the
+preset JSON files.
+
+| Export | Purpose |
+|---|---|
+| `init`, `defaultWasmUrl`, `version`, `constants` | Load the module; version; limits and format constants |
+| `Emulator` | Clock, scan playback and line parameters (`tick`, `stepScan`, `setScan`, …) |
+| `LaserView`, `MeshView` | Render an `Emulator` / a `Slicer` scene on a canvas or `OffscreenCanvas` |
+| `AnimationLoop` | `requestAnimationFrame` loop with clamped `dt`, switchable between windows |
+| `DetachedLaserView`, `openPopup`, `CanvasBridge` | Views in windows of their own |
+| `Mesh` | STL parsing, geometry (`vertices`, `triangles`, `bounds`) |
+| `slice`, `toScanFrame`, `gridSize` | Slice a mesh (with progress and cancellation); scan-frame geometry; grid preview |
+| `Scan` | `.lscan` I/O, metadata, heights and visibility per row or whole, profile runs, range image |
+| `Slicer` | Model, settings, debounced re-slicing, 3D camera |
+| `SliceWorkerClient`, `SliceRunner`, `serveSlicing` (`/worker`) | Slicing in a Web Worker |
+| `defaultParams`, `defaultSliceSettings`, `builtinPresets`, `presetToJson`, `presetFromJson` | Parameters and presets |
+| `profileCurve`, `deformCurve`, `sampleDeformation`, `motionOffset`, `lineAngle`, `extentAlong`, `laserRgb`, `wavelengthToRgb`, `niceStep` | Line model and plot helpers |
+| `actionForKey`, `SHORTCUTS`, `shortcutHelp` | Keyboard shortcuts |
+| `readFileBytes`, `downloadBytes` | File helpers |
 
 For Angular components, see `@javerik/laserline-angular`.
 

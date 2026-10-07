@@ -27,7 +27,9 @@ struct MeshBuffers {
 pub struct MeshViewInput<'a> {
     /// The object; uploaded again only when its `id` changes.
     pub mesh: Option<&'a GpuMesh>,
+    /// Lines and quads drawn around the object.
     pub overlay: &'a Overlay,
+    /// Camera of the frame.
     pub uniforms: ViewUniforms,
     /// Size of the view in physical pixels.
     pub size_px: [u32; 2],
@@ -35,6 +37,7 @@ pub struct MeshViewInput<'a> {
     pub srgb_target: bool,
 }
 
+/// Renders the 3D preview offscreen with MSAA, then blits it into the paint pass.
 pub struct MeshViewRenderer {
     samples: u32,
     mesh_pipeline: wgpu::RenderPipeline,

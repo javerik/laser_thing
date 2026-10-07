@@ -1,6 +1,6 @@
 //! The emulator and slicer state machines, driven from JavaScript.
 
-use crate::data::{Bounds, Mesh, Scan};
+use crate::data::{Bounds, GridInfo, Mesh, Scan};
 use crate::{from_js, to_js};
 use laserline_core::{emulator, scan, slicer};
 use serde::Serialize;
@@ -22,6 +22,7 @@ impl Emulator {
         Ok(Emulator { inner: emulator::Emulator::new(params) })
     }
 
+    /// All line parameters (a copy; assign to change them).
     #[wasm_bindgen(getter, unchecked_return_type = "LaserParams")]
     pub fn params(&self) -> JsValue {
         to_js(&self.inner.params)
@@ -34,11 +35,13 @@ impl Emulator {
         Ok(())
     }
 
+    /// Whether the clock and scan playback advance in `tick`.
     #[wasm_bindgen(getter)]
     pub fn playing(&self) -> bool {
         self.inner.playing
     }
 
+    /// Pauses (false) or resumes (true) the simulation.
     #[wasm_bindgen(setter)]
     pub fn set_playing(&mut self, playing: bool) {
         self.inner.playing = playing;
@@ -50,6 +53,7 @@ impl Emulator {
         self.inner.sim_time
     }
 
+    /// Jumps the simulation clock to `t` seconds.
     #[wasm_bindgen(setter, js_name = simTime)]
     pub fn set_sim_time(&mut self, t: f64) {
         self.inner.sim_time = t;
@@ -78,6 +82,7 @@ impl Emulator {
         self.inner.step_scan(delta as isize);
     }
 
+    /// Jumps to profile `row`.
     #[wasm_bindgen(js_name = seekRow)]
     pub fn seek_row(&mut self, row: usize) {
         self.inner.seek_row(row);
@@ -98,14 +103,16 @@ impl Emulator {
     /// Plays `scan`, keeping the playback position.
     #[wasm_bindgen(js_name = setScan)]
     pub fn set_scan(&mut self, scan: &Scan) {
-        self.inner.scan = Some(scan.inner.clone());
+        self.inner.set_scan(scan.inner.clone());
     }
 
+    /// Removes the scan; the line falls back to its parameters.
     #[wasm_bindgen(js_name = clearScan)]
     pub fn clear_scan(&mut self) {
         self.inner.scan = None;
     }
 
+    /// The scan being played, if any.
     #[wasm_bindgen(getter)]
     pub fn scan(&self) -> Option<Scan> {
         self.inner.scan.clone().map(|inner| Scan { inner })
@@ -134,13 +141,6 @@ struct ModelInfo<'a> {
     bounds: Bounds,
 }
 
-#[derive(Serialize)]
-#[serde(untagged)]
-enum GridInfo {
-    Ok { cols: usize, rows: usize, bytes: usize },
-    Err { error: String },
-}
-
 /// Slicer state: the model, its settings, debounced re-slicing and the 3D view camera.
 ///
 /// Slicing itself runs wherever the host likes (usually a Web Worker): `setModel`,
@@ -153,17 +153,22 @@ pub struct Slicer {
 
 #[wasm_bindgen]
 impl Slicer {
+    /// Starts with `settings` (or the defaults) and automatic re-slicing on unless
+    /// `auto` is false.
     #[wasm_bindgen(constructor)]
     pub fn new(#[wasm_bindgen(unchecked_param_type = "SliceSettings | undefined")] settings: JsValue, auto: Option<bool>) -> Result<Slicer, JsError> {
         let settings = if settings.is_undefined() || settings.is_null() { Default::default() } else { from_js(settings)? };
         Ok(Slicer { inner: slicer::Slicer::new(settings, auto.unwrap_or(true)) })
     }
 
+    /// Settings of the next slice (a copy; assign to change them).
     #[wasm_bindgen(getter, unchecked_return_type = "SliceSettings")]
     pub fn settings(&self) -> JsValue {
         to_js(&self.inner.settings)
     }
 
+    /// Replaces the settings; missing fields take their defaults. May schedule an
+    /// automatic re-slice (see `poll`).
     #[wasm_bindgen(setter)]
     pub fn set_settings(&mut self, #[wasm_bindgen(unchecked_param_type = "SliceSettings")] settings: JsValue) -> Result<(), JsError> {
         self.inner.settings = from_js(settings)?;
@@ -176,6 +181,7 @@ impl Slicer {
         self.inner.auto
     }
 
+    /// Turns automatic re-slicing on or off.
     #[wasm_bindgen(setter)]
     pub fn set_auto(&mut self, auto: bool) {
         self.inner.auto = auto;
@@ -187,6 +193,7 @@ impl Slicer {
         request(self.inner.set_model(mesh.inner.clone(), name, location))
     }
 
+    /// The loaded model, if any.
     #[wasm_bindgen(unchecked_return_type = "ModelInfo | undefined")]
     pub fn model(&self) -> JsValue {
         self.inner.model.as_ref().map_or(JsValue::UNDEFINED, |m| {
@@ -200,6 +207,12 @@ impl Slicer {
     pub fn adopt_scan(&mut self, scan: &Scan) {
         self.inner.clear_model();
         self.inner.settings = scan.inner.meta.settings.clone();
+    }
+
+    /// Drops the model; a running slice is superseded.
+    #[wasm_bindgen(js_name = clearModel)]
+    pub fn clear_model(&mut self) {
+        self.inner.clear_model();
     }
 
     /// Slices with the current settings, superseding a running slice.
@@ -225,6 +238,7 @@ impl Slicer {
         self.inner.finish::<()>(id as u64, Err(error), 0.0);
     }
 
+    /// A slice is running.
     #[wasm_bindgen(getter, js_name = isBusy)]
     pub fn is_busy(&self) -> bool {
         self.inner.is_busy()
@@ -242,11 +256,13 @@ impl Slicer {
         self.inner.is_stale()
     }
 
+    /// Error of the last slice, if it failed.
     #[wasm_bindgen(getter)]
     pub fn error(&self) -> Option<String> {
         self.inner.error.clone()
     }
 
+    /// Seconds the last successful slice took.
     #[wasm_bindgen(getter, js_name = lastDurationS)]
     pub fn last_duration_s(&self) -> Option<f64> {
         self.inner.last_duration_s
@@ -268,11 +284,7 @@ impl Slicer {
         }
         self.inner.update_preview(None);
         let Some((lo, hi)) = self.inner.preview().map(|p| p.bounds) else { return JsValue::UNDEFINED };
-        let info = match scan::grid_size(lo.into(), hi.into(), &self.inner.settings) {
-            Ok((cols, rows)) => GridInfo::Ok { cols, rows, bytes: cols * rows * 5 },
-            Err(error) => GridInfo::Err { error },
-        };
-        to_js(&info)
+        to_js(&GridInfo::new(lo.into(), hi.into(), &self.inner.settings))
     }
 
     /// Rotates the 3D view by a pointer drag in CSS pixels.

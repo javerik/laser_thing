@@ -3,12 +3,19 @@ import { type FullLaserParams, deformCurve, laserRgb, profileCurve, wavelengthTo
 import { type Choice, LlChoice, LlPlot, LlSlider, THEME } from './widgets';
 
 type P = FullLaserParams;
+/** Value of `<ll-line-controls>`. */
 export type LineParamsValue = P['line'];
+/** Value of `<ll-profile-controls>`. */
 export type ProfileParamsValue = P['profile'];
+/** Value of `<ll-color-controls>`. */
 export type ColorParamsValue = P['color'];
+/** Value of `<ll-motion-controls>`. */
 export type MotionParamsValue = P['motion'];
+/** Value of `<ll-deform-controls>`. */
 export type DeformParamsValue = P['deform'];
+/** Value of `<ll-noise-controls>`. */
 export type NoiseParamsValue = P['noise'];
+/** Value of `<ll-scan-params-controls>`. */
 export type ScanParamsValue = P['scan'];
 
 /** Immutable single-field update of a `model()` value. */
@@ -325,9 +332,13 @@ export class LlNoiseControls {
   protected readonly set = patcher(this.value);
 }
 
+/** How the scan maps onto the live line (`LiveInfo.scan`), shown by `<ll-scan-params-controls>`. */
 export interface DisplayMappingValue {
+  /** Screen px per mm along the line. */
   px_per_mm: number;
+  /** Screen px of deflection per mm of height. */
   height_px_per_mm: number;
+  /** Heights deflect the line the other way. */
   invert: boolean;
 }
 

@@ -5,8 +5,12 @@
 
 use crate::scan::{MAX_COLS, MAX_ROWS, Scan, ScanMeta};
 
+/// First bytes of every scan file.
 pub const MAGIC: &[u8; 6] = b"LSCAN\0";
+/// Format version written by [`to_bytes`]; [`from_bytes`] rejects others.
 pub const VERSION: u16 = 1;
+/// Payload bytes per grid cell: an f32 height plus a u8 visibility flag.
+pub const BYTES_PER_CELL: usize = 5;
 /// File extension of scan files, without the dot.
 pub const EXTENSION: &str = "lscan";
 
@@ -17,9 +21,10 @@ pub fn file_name(scan: &Scan) -> String {
     format!("{}.{EXTENSION}", if stem.is_empty() { "scan" } else { stem })
 }
 
+/// Encodes `scan` as an `.lscan` file.
 pub fn to_bytes(scan: &Scan) -> Result<Vec<u8>, String> {
     let meta = serde_json::to_vec(&scan.meta).map_err(|e| e.to_string())?;
-    let mut out = Vec::with_capacity(12 + meta.len() + scan.height.len() * 5);
+    let mut out = Vec::with_capacity(12 + meta.len() + scan.height.len() * BYTES_PER_CELL);
     out.extend(MAGIC);
     out.extend(VERSION.to_le_bytes());
     out.extend((meta.len() as u32).to_le_bytes());
@@ -31,6 +36,7 @@ pub fn to_bytes(scan: &Scan) -> Result<Vec<u8>, String> {
     Ok(out)
 }
 
+/// Decodes an `.lscan` file; fails on a wrong magic, version or size.
 pub fn from_bytes(bytes: &[u8]) -> Result<Scan, String> {
     let bad = |what: &str| format!("not a valid scan file ({what})");
     if bytes.len() < 12 || &bytes[..6] != MAGIC {

@@ -4,6 +4,7 @@ use crate::params::{
     ColorMode, DeformKind, LaserParams, LengthUnit, MotionKind, Orientation, ProfileKind, SweepMode,
 };
 
+/// The built-in presets as `(name, parameters)`, in display order.
 pub fn builtin() -> Vec<(&'static str, LaserParams)> {
     let base = LaserParams::default();
 
@@ -59,10 +60,12 @@ pub fn builtin() -> Vec<(&'static str, LaserParams)> {
     ]
 }
 
+/// Serializes parameters as a preset file (pretty JSON).
 pub fn to_json(p: &LaserParams) -> Result<String, String> {
     serde_json::to_string_pretty(p).map_err(|e| e.to_string())
 }
 
+/// Parses a preset file; missing fields take their defaults.
 pub fn from_json(s: &str) -> Result<LaserParams, String> {
     serde_json::from_str(s).map_err(|e| e.to_string())
 }
