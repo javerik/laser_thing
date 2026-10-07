@@ -1,10 +1,5 @@
 mod app;
-mod callbacks;
-mod files;
-mod laser_ui;
 mod native_files;
-mod slicer_ui;
-mod worker;
 
 use eframe::egui;
 

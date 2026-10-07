@@ -1,11 +1,11 @@
 //! Application shell: live view window, the dockable / detachable control panel, the
 //! slicer window, keyboard shortcuts and persistence.
 
-use crate::laser_ui::LaserUi;
 use crate::native_files::{self, NativeFiles};
 use eframe::egui::{self, Color32, Key, ViewportBuilder, ViewportClass, ViewportCommand, ViewportId};
-use laserline_core::params::LaserParams;
-use laserline_core::scan::SliceSettings;
+use laserline_egui::LaserUi;
+use laserline_egui::core::params::LaserParams;
+use laserline_egui::core::scan::SliceSettings;
 use serde::{Deserialize, Serialize};
 use std::time::{Duration, Instant};
 

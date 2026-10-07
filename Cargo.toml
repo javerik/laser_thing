@@ -15,11 +15,14 @@ homepage = "https://git.javerik.dev/opensource/laserthing"
 [workspace.dependencies]
 laserline-core = { path = "crates/laserline-core", version = "0.1.0" }
 laserline-render = { path = "crates/laserline-render", version = "0.1.0" }
+laserline-egui = { path = "crates/laserline-egui", version = "0.1.0" }
 bytemuck = { version = "1.25.2", features = ["derive"] }
 glam = "0.34.1"
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.151"
 eframe = "0.33.3"
+egui = { version = "0.33.3", default-features = false }
+egui-wgpu = { version = "0.33.3", default-features = false }
 rfd = "0.17.2"
 # Same major version as eframe's egui-wgpu, so the renderers plug into its callbacks.
 wgpu = { version = "27.0.1", default-features = false, features = ["std", "wgsl"] }

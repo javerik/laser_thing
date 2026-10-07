@@ -1,6 +1,6 @@
 //! egui paint callbacks drawing the laserline renderers inside egui rects.
 
-use eframe::{egui, egui_wgpu, wgpu};
+use egui_wgpu::wgpu;
 use laserline_core::gpu_types::{GpuMesh, Overlay, Uniforms, ViewUniforms};
 use laserline_render::{LaserRenderer, MeshViewInput, MeshViewRenderer};
 use std::sync::Arc;

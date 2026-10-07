@@ -5,8 +5,7 @@ use crate::files::{FileHost, FileKind, OpenedFile};
 use crate::callbacks::{self, LaserCallback};
 use crate::slicer_ui::{profile_plot, scan_summary};
 use crate::worker::SliceWorker;
-use eframe::egui::{self, Color32, RichText, Slider, Stroke, Ui};
-use eframe::egui_wgpu;
+use egui::{self, Color32, RichText, Slider, Stroke, Ui};
 use laserline_core::emulator::{Emulator, LiveInfo};
 use laserline_core::model;
 use laserline_core::params::{

@@ -1661,10 +1661,19 @@ name = "laserline-desktop"
 version = "0.1.0"
 dependencies = [
  "eframe",
- "laserline-core",
- "laserline-render",
+ "laserline-egui",
  "rfd",
  "serde",
+]
+
+[[package]]
+name = "laserline-egui"
+version = "0.1.0"
+dependencies = [
+ "egui",
+ "egui-wgpu",
+ "laserline-core",
+ "laserline-render",
 ]
 
 [[package]]

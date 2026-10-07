@@ -4,8 +4,7 @@
 use crate::files::FileHost;
 use crate::laser_ui::{LaserUi, grid, row};
 use crate::callbacks::MeshViewCallback;
-use eframe::egui::{self, Color32, RichText, Slider, Stroke, Ui};
-use eframe::egui_wgpu;
+use egui::{self, Color32, RichText, Slider, Stroke, Ui};
 use laserline_core::camera::OrbitCamera;
 use laserline_core::glam::Vec3;
 use laserline_core::scan::{self, Axis, CameraSide, ModelUnit, Scan, SliceSettings, UpAxis};

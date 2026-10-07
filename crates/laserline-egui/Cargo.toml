@@ -1,0 +1,16 @@
+[package]
+name = "laserline-egui"
+description = "egui panels and views for the laserline emulator: laser line controls, live view and STL slicer"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+
+[dependencies]
+laserline-core.workspace = true
+laserline-render.workspace = true
+egui.workspace = true
+egui-wgpu.workspace = true

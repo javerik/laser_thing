@@ -1,6 +1,6 @@
 //! File dialogs (rfd) and file system access for the UI.
 
-use crate::files::{FileHost, FileKind, OpenedFile};
+use laserline_egui::{FileHost, FileKind, OpenedFile};
 use std::path::Path;
 
 pub struct NativeFiles;
