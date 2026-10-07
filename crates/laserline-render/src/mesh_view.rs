@@ -1,19 +1,16 @@
 //! 3D preview of the object being sliced. Rendered offscreen (MSAA + depth) during
-//! `prepare`, then blitted into the egui pass, so it works inside any egui rect.
+//! `prepare`, then blitted into the caller's pass, so it works inside any viewport.
 
-use eframe::egui;
-use eframe::{egui_wgpu, wgpu};
 use laserline_core::gpu_types::{GpuMesh, LineVertex, Overlay, ViewUniforms};
-use std::sync::Arc;
 
 const COLOR_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm;
 const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
-const SAMPLES: u32 = 4;
 const BACKGROUND: wgpu::Color = wgpu::Color { r: 0.07, g: 0.075, b: 0.085, a: 1.0 };
 
 struct Targets {
     size: [u32; 2],
-    msaa: wgpu::TextureView,
+    /// `None` without multisampling: then the scene renders straight into `resolved`.
+    msaa: Option<wgpu::TextureView>,
     resolved: wgpu::TextureView,
     depth: wgpu::TextureView,
     blit_bind_group: wgpu::BindGroup,
@@ -26,7 +23,20 @@ struct MeshBuffers {
     count: u32,
 }
 
-pub struct MeshViewResources {
+/// Everything drawn in one frame of the 3D preview.
+pub struct MeshViewInput<'a> {
+    /// The object; uploaded again only when its `id` changes.
+    pub mesh: Option<&'a GpuMesh>,
+    pub overlay: &'a Overlay,
+    pub uniforms: ViewUniforms,
+    /// Size of the view in physical pixels.
+    pub size_px: [u32; 2],
+    /// The paint target encodes sRGB itself.
+    pub srgb_target: bool,
+}
+
+pub struct MeshViewRenderer {
+    samples: u32,
     mesh_pipeline: wgpu::RenderPipeline,
     tri_pipeline: wgpu::RenderPipeline,
     line_pipeline: wgpu::RenderPipeline,
@@ -42,8 +52,23 @@ pub struct MeshViewResources {
     targets: Option<Targets>,
 }
 
-impl MeshViewResources {
-    pub fn new(device: &wgpu::Device, target_format: wgpu::TextureFormat) -> Self {
+impl MeshViewRenderer {
+    /// Highest MSAA sample count up to 4 that the adapter supports for the offscreen
+    /// targets (WebGL2 may offer less).
+    pub fn supported_samples(adapter: &wgpu::Adapter) -> u32 {
+        [4, 2, 1]
+            .into_iter()
+            .find(|&n| {
+                [COLOR_FORMAT, DEPTH_FORMAT]
+                    .iter()
+                    .all(|&f| adapter.get_texture_format_features(f).flags.sample_count_supported(n))
+            })
+            .unwrap_or(1)
+    }
+
+    /// `target_format` is the format of the pass `paint` draws into; `samples` the
+    /// MSAA sample count of the offscreen render (see [`Self::supported_samples`]).
+    pub fn new(device: &wgpu::Device, target_format: wgpu::TextureFormat, samples: u32) -> Self {
         let shader = device.create_shader_module(wgpu::include_wgsl!("mesh.wgsl"));
 
         let view_uniforms = device.create_buffer(&wgpu::BufferDescriptor {
@@ -159,7 +184,7 @@ impl MeshViewResources {
                     stencil: Default::default(),
                     bias: Default::default(),
                 }),
-                multisample: wgpu::MultisampleState { count: SAMPLES, ..Default::default() },
+                multisample: wgpu::MultisampleState { count: samples, ..Default::default() },
                 multiview: None,
                 cache: None,
             })
@@ -200,6 +225,7 @@ impl MeshViewResources {
 
         let overlay = Self::overlay_buffer(device, 1024);
         Self {
+            samples,
             mesh_pipeline,
             tri_pipeline,
             line_pipeline,
@@ -244,9 +270,9 @@ impl MeshViewResources {
                 .create_view(&Default::default())
         };
         use wgpu::TextureUsages as U;
-        let msaa = texture("mesh msaa", COLOR_FORMAT, SAMPLES, U::RENDER_ATTACHMENT);
+        let msaa = (self.samples > 1).then(|| texture("mesh msaa", COLOR_FORMAT, self.samples, U::RENDER_ATTACHMENT));
         let resolved = texture("mesh resolved", COLOR_FORMAT, 1, U::RENDER_ATTACHMENT | U::TEXTURE_BINDING);
-        let depth = texture("mesh depth", DEPTH_FORMAT, SAMPLES, U::RENDER_ATTACHMENT);
+        let depth = texture("mesh depth", DEPTH_FORMAT, self.samples, U::RENDER_ATTACHMENT);
         let blit_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("mesh blit bind group"),
             layout: &self.blit_layout,
@@ -284,53 +310,37 @@ impl MeshViewResources {
             count: mesh.indices.len() as u32,
         });
     }
-}
 
-/// Per-frame draw request for the 3D preview.
-pub struct MeshViewCallback {
-    pub mesh: Option<Arc<GpuMesh>>,
-    pub overlay: Arc<Overlay>,
-    pub uniforms: ViewUniforms,
-    /// Size of the view in physical pixels.
-    pub size_px: [u32; 2],
-    pub srgb_target: bool,
-}
+    /// Uploads the frame and renders the scene offscreen, recording into `encoder`.
+    pub fn prepare(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, encoder: &mut wgpu::CommandEncoder, input: &MeshViewInput<'_>) {
+        let max = device.limits().max_texture_dimension_2d;
+        let size = [input.size_px[0].clamp(1, max), input.size_px[1].clamp(1, max)];
+        self.ensure_targets(device, size);
+        self.ensure_mesh(device, queue, input.mesh);
+        queue.write_buffer(&self.view_uniforms, 0, bytemuck::bytes_of(&input.uniforms));
+        queue.write_buffer(&self.blit_uniforms, 0, bytemuck::bytes_of(&[input.srgb_target as u32, 0, 0, 0]));
 
-impl egui_wgpu::CallbackTrait for MeshViewCallback {
-    fn prepare(
-        &self,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
-        _screen_descriptor: &egui_wgpu::ScreenDescriptor,
-        encoder: &mut wgpu::CommandEncoder,
-        resources: &mut egui_wgpu::CallbackResources,
-    ) -> Vec<wgpu::CommandBuffer> {
-        let Some(r) = resources.get_mut::<MeshViewResources>() else {
-            return Vec::new();
-        };
-        let size = [self.size_px[0].clamp(1, 8192), self.size_px[1].clamp(1, 8192)];
-        r.ensure_targets(device, size);
-        r.ensure_mesh(device, queue, self.mesh.as_deref());
-        queue.write_buffer(&r.view_uniforms, 0, bytemuck::bytes_of(&self.uniforms));
-        queue.write_buffer(&r.blit_uniforms, 0, bytemuck::bytes_of(&[self.srgb_target as u32, 0, 0, 0]));
-
-        let o = &self.overlay;
+        let o = input.overlay;
         let all: Vec<LineVertex> = [&o.triangles, &o.lines, &o.lines_on_top].into_iter().flatten().copied().collect();
-        if all.len() * size_of::<LineVertex>() > r.overlay.size() as usize {
-            r.overlay = MeshViewResources::overlay_buffer(device, all.len().next_power_of_two());
+        if all.len() * size_of::<LineVertex>() > self.overlay.size() as usize {
+            self.overlay = Self::overlay_buffer(device, all.len().next_power_of_two());
         }
         if !all.is_empty() {
-            queue.write_buffer(&r.overlay, 0, bytemuck::cast_slice(&all));
+            queue.write_buffer(&self.overlay, 0, bytemuck::cast_slice(&all));
         }
 
-        let t = r.targets.as_ref().unwrap();
+        let t = self.targets.as_ref().unwrap();
+        let (view, resolve_target, store) = match &t.msaa {
+            Some(msaa) => (msaa, Some(&t.resolved), wgpu::StoreOp::Discard),
+            None => (&t.resolved, None, wgpu::StoreOp::Store),
+        };
         let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("mesh preview"),
             color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                view: &t.msaa,
+                view,
                 depth_slice: None,
-                resolve_target: Some(&t.resolved),
-                ops: wgpu::Operations { load: wgpu::LoadOp::Clear(BACKGROUND), store: wgpu::StoreOp::Discard },
+                resolve_target,
+                ops: wgpu::Operations { load: wgpu::LoadOp::Clear(BACKGROUND), store },
             })],
             depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
                 view: &t.depth,
@@ -340,42 +350,35 @@ impl egui_wgpu::CallbackTrait for MeshViewCallback {
             timestamp_writes: None,
             occlusion_query_set: None,
         });
-        pass.set_bind_group(0, &r.view_bind_group, &[]);
-        if let Some(m) = &r.mesh {
-            pass.set_pipeline(&r.mesh_pipeline);
+        pass.set_bind_group(0, &self.view_bind_group, &[]);
+        if let Some(m) = &self.mesh {
+            pass.set_pipeline(&self.mesh_pipeline);
             pass.set_vertex_buffer(0, m.vertices.slice(..));
             pass.set_index_buffer(m.indices.slice(..), wgpu::IndexFormat::Uint32);
             pass.draw_indexed(0..m.count, 0, 0..1);
         }
-        pass.set_vertex_buffer(0, r.overlay.slice(..));
+        pass.set_vertex_buffer(0, self.overlay.slice(..));
         // Buffer order: plane triangles, depth-tested lines, on-top lines. Lines are drawn
         // before the translucent plane so it blends over them; the profile goes last.
         let n_tri = o.triangles.len() as u32;
         let n_line = o.lines.len() as u32;
         let n_top = o.lines_on_top.len() as u32;
         for (pipeline, range) in [
-            (&r.line_pipeline, n_tri..n_tri + n_line),
-            (&r.tri_pipeline, 0..n_tri),
-            (&r.line_top_pipeline, n_tri + n_line..n_tri + n_line + n_top),
+            (&self.line_pipeline, n_tri..n_tri + n_line),
+            (&self.tri_pipeline, 0..n_tri),
+            (&self.line_top_pipeline, n_tri + n_line..n_tri + n_line + n_top),
         ] {
             if !range.is_empty() {
                 pass.set_pipeline(pipeline);
                 pass.draw(range, 0..1);
             }
         }
-        Vec::new()
     }
 
-    fn paint(
-        &self,
-        _info: egui::PaintCallbackInfo,
-        render_pass: &mut wgpu::RenderPass<'static>,
-        resources: &egui_wgpu::CallbackResources,
-    ) {
-        if let Some(r) = resources.get::<MeshViewResources>()
-            && let Some(t) = &r.targets
-        {
-            render_pass.set_pipeline(&r.blit_pipeline);
+    /// Blits the scene rendered by the last `prepare` into the pass's current viewport.
+    pub fn paint(&self, render_pass: &mut wgpu::RenderPass<'_>) {
+        if let Some(t) = &self.targets {
+            render_pass.set_pipeline(&self.blit_pipeline);
             render_pass.set_bind_group(0, &t.blit_bind_group, &[]);
             render_pass.draw(0..3, 0..1);
         }

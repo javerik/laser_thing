@@ -1660,12 +1660,21 @@ dependencies = [
 name = "laserline-desktop"
 version = "0.1.0"
 dependencies = [
- "bytemuck",
  "eframe",
- "glam",
  "laserline-core",
+ "laserline-render",
  "rfd",
  "serde",
+]
+
+[[package]]
+name = "laserline-render"
+version = "0.1.0"
+dependencies = [
+ "bytemuck",
+ "laserline-core",
+ "pollster",
+ "wgpu",
 ]
 
 [[package]]

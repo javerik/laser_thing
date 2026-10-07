@@ -2,8 +2,7 @@
 //! detached; window management stays with the application.
 
 use crate::files::{FileHost, FileKind, OpenedFile};
-use crate::renderer::{LaserCallback, LaserResources};
-use crate::mesh_view::MeshViewResources;
+use crate::callbacks::{self, LaserCallback};
 use crate::slicer_ui::{profile_plot, scan_summary};
 use crate::worker::SliceWorker;
 use eframe::egui::{self, Color32, RichText, Slider, Stroke, Ui};
@@ -43,9 +42,7 @@ pub struct LaserUi {
 impl LaserUi {
     /// Registers the GPU resources of the live and 3D views with egui's wgpu renderer.
     pub fn install_gpu(rs: &egui_wgpu::RenderState) {
-        let mut renderer = rs.renderer.write();
-        renderer.callback_resources.insert(LaserResources::new(&rs.device, rs.target_format));
-        renderer.callback_resources.insert(MeshViewResources::new(&rs.device, rs.target_format));
+        callbacks::install(rs);
     }
 
     /// `srgb_target`: the render target encodes sRGB itself (`TextureFormat::is_srgb`).

@@ -3,10 +3,11 @@
 
 use crate::files::FileHost;
 use crate::laser_ui::{LaserUi, grid, row};
-use crate::mesh_view::MeshViewCallback;
+use crate::callbacks::MeshViewCallback;
 use eframe::egui::{self, Color32, RichText, Slider, Stroke, Ui};
 use eframe::egui_wgpu;
 use laserline_core::camera::OrbitCamera;
+use laserline_core::glam::Vec3;
 use laserline_core::scan::{self, Axis, CameraSide, ModelUnit, Scan, SliceSettings, UpAxis};
 use laserline_core::slicer::Slicer;
 use laserline_core::viz;
@@ -20,7 +21,7 @@ const fn rgb(c: [u8; 3]) -> Color32 {
 }
 
 /// Screen position of `p` inside `rect`, or `None` behind the camera.
-pub fn project(camera: &OrbitCamera, rect: egui::Rect, p: glam::Vec3) -> Option<egui::Pos2> {
+pub fn project(camera: &OrbitCamera, rect: egui::Rect, p: Vec3) -> Option<egui::Pos2> {
     let [x, y] = camera.project(rect.aspect_ratio(), p)?;
     Some(egui::pos2(rect.left() + x * rect.width(), rect.top() + y * rect.height()))
 }

@@ -1,5 +1,5 @@
 // 3D preview of the object in the scan frame (mm, z up), rendered offscreen with
-// MSAA and depth, then blitted into the egui pass.
+// MSAA and depth, then blitted into the target pass.
 
 struct View {
     view_proj: mat4x4f,

@@ -1,9 +1,8 @@
 mod app;
+mod callbacks;
 mod files;
 mod laser_ui;
-mod mesh_view;
 mod native_files;
-mod renderer;
 mod slicer_ui;
 mod worker;
 

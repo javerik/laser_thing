@@ -26,3 +26,5 @@ pub mod slicer;
 pub mod viz;
 
 pub use gpu_types::DEFORM_SAMPLES;
+/// Re-exported so users of the camera and overlay types get the matching version.
+pub use glam;

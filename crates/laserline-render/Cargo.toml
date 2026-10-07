@@ -1,0 +1,21 @@
+[package]
+name = "laserline-render"
+description = "wgpu renderers for the laserline emulator: the laser line pass and the 3D slicer preview (native and WebGL2/WebGPU)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+
+[dependencies]
+laserline-core.workspace = true
+bytemuck.workspace = true
+# Backends are chosen by the application (eframe, or the wasm bindings for WebGL2/WebGPU).
+wgpu.workspace = true
+
+[dev-dependencies]
+laserline-core = { workspace = true, features = ["test-utils"] }
+pollster = "0.4"
+wgpu = { workspace = true, features = ["vulkan", "gles", "metal", "dx12"] }

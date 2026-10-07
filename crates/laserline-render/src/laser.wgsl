@@ -25,8 +25,10 @@ struct Uniforms {
 };
 
 @group(0) @binding(0) var<uniform> u: Uniforms;
-// Per sample along the line: (displacement px, intensity 0..1).
-@group(0) @binding(1) var<storage, read> deform: array<vec2f>;
+// Per sample along the line: (displacement px, intensity 0..1), row-major in rows of
+// DEFORM_WIDTH texels. A texture rather than a storage buffer so WebGL2 can read it.
+@group(0) @binding(1) var deform: texture_2d<f32>;
+const DEFORM_WIDTH: u32 = 1024u;
 
 @vertex
 fn vs_main(@builtin(vertex_index) i: u32) -> @builtin(position) vec4f {
@@ -64,7 +66,11 @@ fn deform_at(x: f32) -> vec2f {
     let fi = clamp((x - u.deform_start) / u.deform_step, 0.0, last);
     let i0 = u32(floor(fi));
     let i1 = min(i0 + 1u, u.deform_count - 1u);
-    return mix(deform[i0], deform[i1], fract(fi));
+    return mix(deform_sample(i0), deform_sample(i1), fract(fi));
+}
+
+fn deform_sample(i: u32) -> vec2f {
+    return textureLoad(deform, vec2i(i32(i % DEFORM_WIDTH), i32(i / DEFORM_WIDTH)), 0).xy;
 }
 
 // Mirrors model::profile_intensity.
