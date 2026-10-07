@@ -20,6 +20,7 @@ pub const MAX_COLS: usize = crate::DEFORM_SAMPLES;
 pub const MAX_ROWS: usize = 20_000;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "wasm", derive(tsify::Tsify))]
 pub enum UpAxis {
     PosX,
     NegX,
@@ -30,6 +31,7 @@ pub enum UpAxis {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "wasm", derive(tsify::Tsify))]
 pub enum Axis {
     X,
     Y,
@@ -38,6 +40,7 @@ pub enum Axis {
 
 /// Unit the model coordinates are given in.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "wasm", derive(tsify::Tsify))]
 pub enum ModelUnit {
     Mm,
     Cm,
@@ -58,6 +61,7 @@ impl ModelUnit {
 
 /// Side of the laser plane the camera looks from, relative to the travel direction.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "wasm", derive(tsify::Tsify))]
 pub enum CameraSide {
     /// Camera on the +v side (towards the part of the object not yet scanned).
     Ahead,
@@ -75,6 +79,7 @@ impl CameraSide {
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "wasm", derive(tsify::Tsify))]
 #[serde(default)]
 pub struct SliceSettings {
     /// Model axis pointing up (towards the sensor).
@@ -137,6 +142,7 @@ impl SliceSettings {
 
 /// Grid layout of a scan; cell `(i, j)` is centered at `(u0 + i·du, v0 + j·dv)`.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "wasm", derive(tsify::Tsify))]
 pub struct ScanMeta {
     /// File name of the model the scan was sliced from.
     pub source: String,
@@ -220,8 +226,35 @@ pub fn grid_size(lo: [f32; 3], hi: [f32; 3], s: &SliceSettings) -> Result<(usize
 /// Progress of a running slice in 1/1000.
 pub type Progress = AtomicU32;
 
+/// Watches a running slice: reports progress and can stop it. Called from the slicing
+/// threads, so it must be `Sync`.
+pub trait SliceObserver: Sync {
+    /// Checked regularly; returning true stops the slice with `Err("cancelled")`.
+    fn cancelled(&self) -> bool;
+    /// Progress in 1/1000.
+    fn progress(&self, permille: u32);
+}
+
+/// Cancel flag and progress counter, for slices running on another thread.
+struct Atomics<'a>(&'a AtomicBool, &'a Progress);
+
+impl SliceObserver for Atomics<'_> {
+    fn cancelled(&self) -> bool {
+        self.0.load(Ordering::Relaxed)
+    }
+
+    fn progress(&self, permille: u32) {
+        self.1.store(permille, Ordering::Relaxed);
+    }
+}
+
 /// Slices `mesh` into a scan. Returns `Err("cancelled")` when `cancel` is set.
 pub fn slice(mesh: &Mesh, s: &SliceSettings, source: &str, cancel: &AtomicBool, progress: &Progress) -> Result<Scan, String> {
+    slice_observed(mesh, s, source, &Atomics(cancel, progress))
+}
+
+/// [`slice`] with progress and cancellation going through `observer`.
+pub fn slice_observed(mesh: &Mesh, s: &SliceSettings, source: &str, observer: &dyn SliceObserver) -> Result<Scan, String> {
     let pts = mesh::to_scan_frame(mesh, s);
     let (lo, hi) = mesh::bounds(&pts);
     let (cols, rows) = grid_size(lo, hi, s)?;
@@ -237,7 +270,7 @@ pub fn slice(mesh: &Mesh, s: &SliceSettings, source: &str, cancel: &AtomicBool, 
         z_max_mm: 0.0,
     };
 
-    let mut height = rasterize(&pts, &mesh.triangles, &meta, cancel, progress)?;
+    let mut height = rasterize(&pts, &mesh.triangles, &meta, observer)?;
     let mut z_max = 0.0f32;
     for h in &mut height {
         if *h == f32::NEG_INFINITY {
@@ -249,11 +282,11 @@ pub fn slice(mesh: &Mesh, s: &SliceSettings, source: &str, cancel: &AtomicBool, 
     let meta = ScanMeta { z_max_mm: z_max, ..meta };
 
     let visible = if s.occlusion && s.triangulation_deg > 0.1 {
-        occlusion(&height, &meta, cancel)?
+        occlusion(&height, &meta, observer)?
     } else {
         height.iter().map(|h| h.is_finite() as u8).collect()
     };
-    progress.store(1000, Ordering::Relaxed);
+    observer.progress(1000);
     Ok(Scan { meta, height, visible })
 }
 
@@ -284,7 +317,7 @@ fn for_each_band<T: Send>(data: &mut [T], band_len: usize, f: impl Fn(usize, &mu
 }
 
 /// Topmost surface per grid cell (z-buffer max); `-inf` where nothing is hit.
-fn rasterize(pts: &[[f32; 3]], tris: &[[u32; 3]], m: &ScanMeta, cancel: &AtomicBool, progress: &Progress) -> Result<Vec<f32>, String> {
+fn rasterize(pts: &[[f32; 3]], tris: &[[u32; 3]], m: &ScanMeta, observer: &dyn SliceObserver) -> Result<Vec<f32>, String> {
     let mut height = vec![f32::NEG_INFINITY; m.cols * m.rows];
     let n_threads = threads();
     let band_rows = m.rows.div_ceil(n_threads).max(1);
@@ -296,17 +329,17 @@ fn rasterize(pts: &[[f32; 3]], tris: &[[u32; 3]], m: &ScanMeta, cancel: &AtomicB
         let j1 = j0 + chunk.len() / m.cols; // exclusive
         for (n, t) in tris.iter().enumerate() {
             if n % 4096 == 0 {
-                if cancel.load(Ordering::Relaxed) {
+                if observer.cancelled() {
                     return;
                 }
                 let d = done.fetch_add(4096, Ordering::Relaxed) as f64;
-                progress.store((d / total * 900.0).min(900.0) as u32, Ordering::Relaxed);
+                observer.progress((d / total * 900.0).min(900.0) as u32);
             }
             let tri = t.map(|i| pts[i as usize]);
             raster_triangle(&tri, m, j0, j1, chunk);
         }
     });
-    if cancel.load(Ordering::Relaxed) {
+    if observer.cancelled() {
         return Err("cancelled".into());
     }
     Ok(height)
@@ -374,7 +407,7 @@ fn raster_triangle(tri: &[[f32; 3]; 3], m: &ScanMeta, j0: usize, j1: usize, band
 
 /// Visibility of each cell from the camera: the ray from the surface point towards
 /// the camera rises by `dv·cot α` per row and must stay above the heightmap.
-fn occlusion(height: &[f32], m: &ScanMeta, cancel: &AtomicBool) -> Result<Vec<u8>, String> {
+fn occlusion(height: &[f32], m: &ScanMeta, observer: &dyn SliceObserver) -> Result<Vec<u8>, String> {
     let s = &m.settings;
     let rise = m.dv_mm / s.triangulation_deg.clamp(0.1, 89.9).to_radians().tan();
     let dir = s.camera_side.sign();
@@ -384,7 +417,7 @@ fn occlusion(height: &[f32], m: &ScanMeta, cancel: &AtomicBool) -> Result<Vec<u8
 
     for_each_band(&mut visible, band_rows * m.cols, |band, chunk| {
         for (k, out) in chunk.iter_mut().enumerate() {
-            if k % m.cols == 0 && cancel.load(Ordering::Relaxed) {
+            if k % m.cols == 0 && observer.cancelled() {
                 return;
             }
             let (i, j) = (k % m.cols, band * band_rows + k / m.cols);
@@ -412,7 +445,7 @@ fn occlusion(height: &[f32], m: &ScanMeta, cancel: &AtomicBool) -> Result<Vec<u8
             *out = seen as u8;
         }
     });
-    if cancel.load(Ordering::Relaxed) {
+    if observer.cancelled() {
         return Err("cancelled".into());
     }
     Ok(visible)
@@ -420,6 +453,7 @@ fn occlusion(height: &[f32], m: &ScanMeta, cancel: &AtomicBool) -> Result<Vec<u8
 
 /// How scan millimetres land on the screen.
 #[derive(Clone, Copy, Debug, PartialEq, Serialize)]
+#[cfg_attr(feature = "wasm", derive(tsify::Tsify))]
 pub struct DisplayMapping {
     /// Screen pixels per mm along the line.
     pub px_per_mm: f32,

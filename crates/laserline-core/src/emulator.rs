@@ -11,6 +11,7 @@ use std::sync::Arc;
 
 /// Values measured while computing a frame, shown as readouts in the UI.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Serialize)]
+#[cfg_attr(feature = "wasm", derive(tsify::Tsify))]
 pub struct LiveInfo {
     pub view_px: [f32; 2],
     /// Line center relative to the view origin.

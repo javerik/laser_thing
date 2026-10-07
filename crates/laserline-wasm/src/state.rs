@@ -1,0 +1,304 @@
+//! The emulator and slicer state machines, driven from JavaScript.
+
+use crate::data::{Bounds, Mesh, Scan};
+use crate::{from_js, to_js};
+use laserline_core::{emulator, scan, slicer};
+use serde::Serialize;
+use wasm_bindgen::prelude::*;
+
+/// Simulation clock, scan playback and line parameters. Call `tick(dt)` once per
+/// displayed frame and draw it with a `LaserView`.
+#[wasm_bindgen]
+pub struct Emulator {
+    pub(crate) inner: emulator::Emulator,
+}
+
+#[wasm_bindgen]
+impl Emulator {
+    /// Starts with `params`, or the defaults.
+    #[wasm_bindgen(constructor)]
+    pub fn new(#[wasm_bindgen(unchecked_param_type = "LaserParams | undefined")] params: JsValue) -> Result<Emulator, JsError> {
+        let params = if params.is_undefined() || params.is_null() { Default::default() } else { from_js(params)? };
+        Ok(Emulator { inner: emulator::Emulator::new(params) })
+    }
+
+    #[wasm_bindgen(getter, unchecked_return_type = "LaserParams")]
+    pub fn params(&self) -> JsValue {
+        to_js(&self.inner.params)
+    }
+
+    /// Replaces all parameters; missing fields take their defaults.
+    #[wasm_bindgen(setter)]
+    pub fn set_params(&mut self, #[wasm_bindgen(unchecked_param_type = "LaserParams")] params: JsValue) -> Result<(), JsError> {
+        self.inner.params = from_js(params)?;
+        Ok(())
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn playing(&self) -> bool {
+        self.inner.playing
+    }
+
+    #[wasm_bindgen(setter)]
+    pub fn set_playing(&mut self, playing: bool) {
+        self.inner.playing = playing;
+    }
+
+    /// Simulated seconds.
+    #[wasm_bindgen(getter, js_name = simTime)]
+    pub fn sim_time(&self) -> f64 {
+        self.inner.sim_time
+    }
+
+    #[wasm_bindgen(setter, js_name = simTime)]
+    pub fn set_sim_time(&mut self, t: f64) {
+        self.inner.sim_time = t;
+    }
+
+    /// Smoothed frame rate measured by `tick`.
+    #[wasm_bindgen(getter)]
+    pub fn fps(&self) -> f32 {
+        self.inner.fps
+    }
+
+    /// Advances by one displayed frame that took `dt` seconds.
+    pub fn tick(&mut self, dt: f64) {
+        self.inner.tick(dt);
+    }
+
+    /// Rewinds the clock and the scan playback.
+    #[wasm_bindgen(js_name = resetTime)]
+    pub fn reset_time(&mut self) {
+        self.inner.reset_time();
+    }
+
+    /// Shows the profile `delta` rows away from the current one.
+    #[wasm_bindgen(js_name = stepScan)]
+    pub fn step_scan(&mut self, delta: i32) {
+        self.inner.step_scan(delta as isize);
+    }
+
+    #[wasm_bindgen(js_name = seekRow)]
+    pub fn seek_row(&mut self, row: usize) {
+        self.inner.seek_row(row);
+    }
+
+    /// Profile currently shown (0 without a scan).
+    #[wasm_bindgen(getter, js_name = currentRow)]
+    pub fn current_row(&self) -> usize {
+        self.inner.current_row()
+    }
+
+    /// True when the scan shapes the line.
+    #[wasm_bindgen(getter, js_name = scanDrivesLine)]
+    pub fn scan_drives_line(&self) -> bool {
+        self.inner.scan_drives_line()
+    }
+
+    /// Plays `scan`, keeping the playback position.
+    #[wasm_bindgen(js_name = setScan)]
+    pub fn set_scan(&mut self, scan: &Scan) {
+        self.inner.scan = Some(scan.inner.clone());
+    }
+
+    #[wasm_bindgen(js_name = clearScan)]
+    pub fn clear_scan(&mut self) {
+        self.inner.scan = None;
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn scan(&self) -> Option<Scan> {
+        self.inner.scan.clone().map(|inner| Scan { inner })
+    }
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct Request {
+    id: u64,
+    model_id: u64,
+    settings: scan::SliceSettings,
+    name: String,
+}
+
+fn request(r: Option<slicer::SliceRequest>) -> JsValue {
+    r.map_or(JsValue::UNDEFINED, |r| to_js(&Request { id: r.id, model_id: r.model_id, settings: r.settings, name: r.name }))
+}
+
+#[derive(Serialize)]
+struct ModelInfo<'a> {
+    id: u64,
+    name: &'a str,
+    location: &'a str,
+    triangles: usize,
+    bounds: Bounds,
+}
+
+#[derive(Serialize)]
+#[serde(untagged)]
+enum GridInfo {
+    Ok { cols: usize, rows: usize, bytes: usize },
+    Err { error: String },
+}
+
+/// Slicer state: the model, its settings, debounced re-slicing and the 3D view camera.
+///
+/// Slicing itself runs wherever the host likes (usually a Web Worker): `setModel`,
+/// `start` and `poll` return a `SliceRequest` to run, `finish` / `fail` report the
+/// outcome. Requests superseded by newer ones are ignored when they finish.
+#[wasm_bindgen]
+pub struct Slicer {
+    pub(crate) inner: slicer::Slicer,
+}
+
+#[wasm_bindgen]
+impl Slicer {
+    #[wasm_bindgen(constructor)]
+    pub fn new(#[wasm_bindgen(unchecked_param_type = "SliceSettings | undefined")] settings: JsValue, auto: Option<bool>) -> Result<Slicer, JsError> {
+        let settings = if settings.is_undefined() || settings.is_null() { Default::default() } else { from_js(settings)? };
+        Ok(Slicer { inner: slicer::Slicer::new(settings, auto.unwrap_or(true)) })
+    }
+
+    #[wasm_bindgen(getter, unchecked_return_type = "SliceSettings")]
+    pub fn settings(&self) -> JsValue {
+        to_js(&self.inner.settings)
+    }
+
+    #[wasm_bindgen(setter)]
+    pub fn set_settings(&mut self, #[wasm_bindgen(unchecked_param_type = "SliceSettings")] settings: JsValue) -> Result<(), JsError> {
+        self.inner.settings = from_js(settings)?;
+        Ok(())
+    }
+
+    /// Re-slice automatically when the settings change.
+    #[wasm_bindgen(getter)]
+    pub fn auto(&self) -> bool {
+        self.inner.auto
+    }
+
+    #[wasm_bindgen(setter)]
+    pub fn set_auto(&mut self, auto: bool) {
+        self.inner.auto = auto;
+    }
+
+    /// Loads a model. Returns the slice to run when auto re-slicing is on.
+    #[wasm_bindgen(js_name = setModel, unchecked_return_type = "SliceRequest | undefined")]
+    pub fn set_model(&mut self, mesh: &Mesh, name: &str, location: &str) -> JsValue {
+        request(self.inner.set_model(mesh.inner.clone(), name, location))
+    }
+
+    #[wasm_bindgen(unchecked_return_type = "ModelInfo | undefined")]
+    pub fn model(&self) -> JsValue {
+        self.inner.model.as_ref().map_or(JsValue::UNDEFINED, |m| {
+            let (lo, hi) = m.bounds;
+            to_js(&ModelInfo { id: m.id(), name: &m.name, location: &m.location, triangles: m.mesh.triangles.len(), bounds: Bounds { lo, hi } })
+        })
+    }
+
+    /// Plays a scan without its model: drops the model and shows the scan's settings.
+    #[wasm_bindgen(js_name = adoptScan)]
+    pub fn adopt_scan(&mut self, scan: &Scan) {
+        self.inner.clear_model();
+        self.inner.settings = scan.inner.meta.settings.clone();
+    }
+
+    /// Slices with the current settings, superseding a running slice.
+    #[wasm_bindgen(unchecked_return_type = "SliceRequest | undefined")]
+    pub fn start(&mut self) -> JsValue {
+        request(self.inner.start())
+    }
+
+    /// Call every frame with a clock in seconds; returns a due automatic re-slice.
+    #[wasm_bindgen(unchecked_return_type = "SliceRequest | undefined")]
+    pub fn poll(&mut self, now_s: f64) -> JsValue {
+        request(self.inner.poll(now_s))
+    }
+
+    /// Reports that request `id` produced a scan in `duration_s` seconds. Returns true
+    /// if it is still current, i.e. the scan should be shown; false if superseded.
+    pub fn finish(&mut self, id: f64, duration_s: f64) -> bool {
+        self.inner.finish(id as u64, Ok(()), duration_s).is_some()
+    }
+
+    /// Reports a failed slice (`"cancelled"` is not shown as an error).
+    pub fn fail(&mut self, id: f64, error: String) {
+        self.inner.finish::<()>(id as u64, Err(error), 0.0);
+    }
+
+    #[wasm_bindgen(getter, js_name = isBusy)]
+    pub fn is_busy(&self) -> bool {
+        self.inner.is_busy()
+    }
+
+    /// Id of the running request.
+    #[wasm_bindgen(getter)]
+    pub fn running(&self) -> Option<f64> {
+        self.inner.running().map(|id| id as f64)
+    }
+
+    /// The model has settings that were not sliced yet.
+    #[wasm_bindgen(getter, js_name = isStale)]
+    pub fn is_stale(&self) -> bool {
+        self.inner.is_stale()
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn error(&self) -> Option<String> {
+        self.inner.error.clone()
+    }
+
+    #[wasm_bindgen(getter, js_name = lastDurationS)]
+    pub fn last_duration_s(&self) -> Option<f64> {
+        self.inner.last_duration_s
+    }
+
+    /// Size (along line, travel, height) of the model in the scan frame in mm.
+    #[wasm_bindgen(js_name = modelSizeMm)]
+    pub fn model_size_mm(&mut self) -> Option<Vec<f32>> {
+        self.inner.model.as_ref()?;
+        self.inner.update_preview(None);
+        self.inner.preview().map(|p| (p.bounds.1 - p.bounds.0).to_array().to_vec())
+    }
+
+    /// Grid the current settings produce for the model.
+    #[wasm_bindgen(js_name = gridInfo, unchecked_return_type = "GridInfo | undefined")]
+    pub fn grid_info(&mut self) -> JsValue {
+        if self.inner.model.is_none() {
+            return JsValue::UNDEFINED;
+        }
+        self.inner.update_preview(None);
+        let Some((lo, hi)) = self.inner.preview().map(|p| p.bounds) else { return JsValue::UNDEFINED };
+        let info = match scan::grid_size(lo.into(), hi.into(), &self.inner.settings) {
+            Ok((cols, rows)) => GridInfo::Ok { cols, rows, bytes: cols * rows * 5 },
+            Err(error) => GridInfo::Err { error },
+        };
+        to_js(&info)
+    }
+
+    /// Rotates the 3D view by a pointer drag in CSS pixels.
+    pub fn orbit(&mut self, dx: f32, dy: f32) {
+        if let Some(c) = &mut self.inner.camera {
+            c.orbit(dx, dy);
+        }
+    }
+
+    /// Pans the 3D view by a pointer drag in CSS pixels.
+    pub fn pan(&mut self, dx: f32, dy: f32) {
+        if let Some(c) = &mut self.inner.camera {
+            c.pan(dx, dy);
+        }
+    }
+
+    /// Zooms the 3D view: `scroll` in pixels (positive = closer), `pinch` factor (> 1 = closer).
+    pub fn zoom(&mut self, scroll: f32, pinch: Option<f32>) {
+        if let Some(c) = &mut self.inner.camera {
+            c.zoom(scroll, pinch.unwrap_or(1.0));
+        }
+    }
+
+    /// Reframes the 3D view on the next render.
+    #[wasm_bindgen(js_name = resetCamera)]
+    pub fn reset_camera(&mut self) {
+        self.inner.camera = None;
+    }
+}

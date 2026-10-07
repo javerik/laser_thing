@@ -1,0 +1,13 @@
+{
+  "name": "laserline-workspace",
+  "private": true,
+  "description": "npm workspace of the laserline packages and the web demo",
+  "workspaces": [
+    "packages/laserline"
+  ],
+  "scripts": {
+    "build:wasm": "scripts/build-wasm.sh",
+    "build": "npm run build --workspaces --if-present",
+    "test": "npm test --workspaces --if-present"
+  }
+}

@@ -1,0 +1,28 @@
+[package]
+name = "laserline-wasm"
+description = "wasm-bindgen bindings of laserline for the browser, published to npm as @javerik/laserline"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+# Shipped through npm (scripts/build-wasm.sh), not crates.io.
+publish = false
+
+[lib]
+name = "laserline"
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+laserline-core = { workspace = true, features = ["wasm"] }
+laserline-render.workspace = true
+serde.workspace = true
+wasm-bindgen.workspace = true
+wasm-bindgen-futures.workspace = true
+js-sys.workspace = true
+web-sys = { workspace = true, features = ["HtmlCanvasElement", "ImageData"] }
+serde-wasm-bindgen.workspace = true
+console_error_panic_hook.workspace = true
+wgpu = { workspace = true, features = ["webgl", "webgpu"] }

@@ -1,0 +1,52 @@
+{
+  "name": "@javerik/laserline",
+  "version": "0.1.0",
+  "description": "Laser line emulator and laser-triangulation STL slicer for the browser (WebAssembly, WebGPU/WebGL2)",
+  "license": "MIT OR Apache-2.0",
+  "author": "Jonas Ahlf <javerik@javerik.space>",
+  "repository": {
+    "type": "git",
+    "url": "https://git.javerik.dev/opensource/laserthing",
+    "directory": "packages/laserline"
+  },
+  "keywords": ["laser", "triangulation", "emulator", "stl", "webgl", "webgpu", "wasm"],
+  "type": "module",
+  "main": "./dist/index.js",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./worker": {
+      "types": "./dist/slice-worker.d.ts",
+      "default": "./dist/slice-worker.js"
+    },
+    "./wasm/laserline_bg.wasm": "./wasm/laserline_bg.wasm",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "dist",
+    "wasm/laserline.js",
+    "wasm/laserline.d.ts",
+    "wasm/laserline_bg.wasm",
+    "wasm/laserline_bg.wasm.d.ts",
+    "README.md",
+    "LICENSE-MIT",
+    "LICENSE-APACHE"
+  ],
+  "sideEffects": false,
+  "scripts": {
+    "build:wasm": "../../scripts/build-wasm.sh",
+    "build": "tsc -p tsconfig.json",
+    "test": "node --test test/",
+    "prepack": "npm run build"
+  },
+  "devDependencies": {
+    "typescript": "~5.9.3"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}

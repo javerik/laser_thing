@@ -33,10 +33,19 @@ pub struct Model {
     id: u64,
 }
 
+impl Model {
+    /// Changes whenever another model is loaded; requests carry it as `model_id`.
+    pub fn id(&self) -> u64 {
+        self.id
+    }
+}
+
 /// A slice the host should run: `scan::slice(&mesh, &settings, &name, ..)`.
 #[derive(Clone, Debug)]
 pub struct SliceRequest {
     pub id: u64,
+    /// [`Model::id`] of the model to slice.
+    pub model_id: u64,
     pub mesh: Arc<Mesh>,
     pub settings: SliceSettings,
     pub name: String,
@@ -118,10 +127,11 @@ impl Slicer {
     }
 
     /// Loads a model; returns the slice to run when auto re-slicing is on.
-    pub fn set_model(&mut self, mesh: Mesh, name: impl Into<String>, location: impl Into<String>) -> Option<SliceRequest> {
+    pub fn set_model(&mut self, mesh: impl Into<Arc<Mesh>>, name: impl Into<String>, location: impl Into<String>) -> Option<SliceRequest> {
+        let mesh = mesh.into();
         let bounds = mesh.bounds();
         let id = self.take_id();
-        self.model = Some(Model { mesh: Arc::new(mesh), name: name.into(), location: location.into(), bounds, id });
+        self.model = Some(Model { mesh, name: name.into(), location: location.into(), bounds, id });
         self.sliced = None;
         self.camera = None;
         self.error = None;
@@ -139,18 +149,19 @@ impl Slicer {
     /// Slices the model with the current settings, superseding a running slice.
     pub fn start(&mut self) -> Option<SliceRequest> {
         let model = self.model.as_ref()?;
-        let (mesh, name) = (model.mesh.clone(), model.name.clone());
+        let (mesh, name, model_id) = (model.mesh.clone(), model.name.clone(), model.id);
         let id = self.take_id();
         self.running = Some(id);
         self.sliced = Some(self.settings.clone());
         self.pending = None;
         self.error = None;
-        Some(SliceRequest { id, mesh, settings: self.settings.clone(), name })
+        Some(SliceRequest { id, model_id, mesh, settings: self.settings.clone(), name })
     }
 
     /// Reports the outcome of request `id`, which took `duration_s` seconds. Returns
-    /// the scan to show, or `None` for errors and superseded requests.
-    pub fn finish(&mut self, id: u64, result: Result<Scan, String>, duration_s: f64) -> Option<Scan> {
+    /// the scan to show (a `Scan` or a handle to one), or `None` for errors and
+    /// superseded requests.
+    pub fn finish<S>(&mut self, id: u64, result: Result<S, String>, duration_s: f64) -> Option<S> {
         if self.running != Some(id) {
             return None;
         }
@@ -297,10 +308,10 @@ mod tests {
         let new = sl.start().unwrap();
         assert!(sl.finish(old.id, run(&old), 1.0).is_none(), "superseded result is dropped");
         assert!(sl.is_busy());
-        assert!(sl.finish(new.id, Err(CANCELLED.into()), 0.0).is_none());
+        assert!(sl.finish::<Scan>(new.id, Err(CANCELLED.into()), 0.0).is_none());
         assert!(sl.error.is_none(), "cancelling is not an error");
         let r = sl.start().unwrap();
-        sl.finish(r.id, Err("boom".into()), 0.0);
+        sl.finish::<Scan>(r.id, Err("boom".into()), 0.0);
         assert_eq!(sl.error.as_deref(), Some("boom"));
     }
 

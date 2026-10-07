@@ -1,0 +1,49 @@
+/**
+ * Laser line emulator and laser-triangulation STL slicer for the browser.
+ *
+ * Call {@link init} once before using anything else. Then:
+ * - `Emulator` + `LaserView`: the animated laser line on a canvas,
+ * - `Slicer` + `MeshView` + {@link SliceRunner}: STL import, slicing in a Web
+ *   Worker and the 3D preview,
+ * - `Scan`, `Mesh`, presets and plot helpers.
+ */
+import initWasm from '../wasm/laserline.js';
+import type { InitInput, LaserParams, LiveInfo, SliceSettings } from '../wasm/laserline.js';
+
+export * from '../wasm/laserline.js';
+export { AnimationLoop } from './loop.js';
+export { readFileBytes, downloadBytes } from './files.js';
+export { SliceWorkerClient, type SliceResult } from './slice-client.js';
+export type { FromWorker, ToWorker } from './protocol.js';
+export { SliceRunner } from './slice-runner.js';
+
+/** `T` with all fields required, recursively (generated types mark defaulted fields optional). */
+export type DeepRequired<T> = T extends readonly unknown[]
+  ? T
+  : T extends object
+    ? { [K in keyof T]-?: DeepRequired<T[K]> }
+    : T;
+
+/** Complete laser parameters, as returned by `defaultParams()` and `Emulator.params`. */
+export type FullLaserParams = DeepRequired<LaserParams>;
+/** Complete slice settings, as returned by `defaultSliceSettings()` and `Slicer.settings`. */
+export type FullSliceSettings = DeepRequired<SliceSettings>;
+/** Measurements of a rendered frame. */
+export type FullLiveInfo = DeepRequired<LiveInfo>;
+
+let ready: Promise<void> | undefined;
+
+/** URL of the WebAssembly module inside this package (for bundlers that support it). */
+export function defaultWasmUrl(): URL {
+  return new URL('../wasm/laserline_bg.wasm', import.meta.url);
+}
+
+/**
+ * Loads the WebAssembly module. `wasm` is where to fetch `laserline_bg.wasm` from;
+ * bundlers that do not resolve `new URL(…, import.meta.url)` (e.g. Angular) should copy
+ * the file to their assets and pass its URL. Repeated calls share the first load.
+ */
+export function init(wasm?: InitInput | Promise<InitInput>): Promise<void> {
+  ready ??= initWasm({ module_or_path: wasm ?? defaultWasmUrl() }).then(() => undefined);
+  return ready;
+}

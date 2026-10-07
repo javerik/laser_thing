@@ -7,12 +7,14 @@
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "wasm", derive(tsify::Tsify))]
 pub enum Orientation {
     Horizontal,
     Vertical,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "wasm", derive(tsify::Tsify))]
 pub enum LengthUnit {
     /// Absolute length in physical pixels.
     Pixels,
@@ -21,6 +23,7 @@ pub enum LengthUnit {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "wasm", derive(tsify::Tsify))]
 pub enum ProfileKind {
     /// Gaussian cross-section; `width` is the FWHM.
     Gaussian,
@@ -31,12 +34,14 @@ pub enum ProfileKind {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "wasm", derive(tsify::Tsify))]
 pub enum ColorMode {
     Wavelength,
     Custom,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "wasm", derive(tsify::Tsify))]
 pub enum MotionKind {
     Static,
     Sweep,
@@ -44,6 +49,7 @@ pub enum MotionKind {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "wasm", derive(tsify::Tsify))]
 pub enum SweepMode {
     /// Jump back to the start after reaching the end.
     Wrap,
@@ -52,6 +58,7 @@ pub enum SweepMode {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "wasm", derive(tsify::Tsify))]
 pub enum DeformKind {
     None,
     Step,
@@ -62,6 +69,7 @@ pub enum DeformKind {
 
 /// How the scan's along-line millimetres are sized on screen.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "wasm", derive(tsify::Tsify))]
 pub enum ScanScale {
     /// Stretch the scan width over the configured line length.
     FitLine,
@@ -70,6 +78,7 @@ pub enum ScanScale {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "wasm", derive(tsify::Tsify))]
 pub enum RateMode {
     /// One profile per rendered frame.
     PerFrame,
@@ -79,6 +88,7 @@ pub enum RateMode {
 
 /// How object height turns into line displacement on screen.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "wasm", derive(tsify::Tsify))]
 pub enum HeightGain {
     /// Same px/mm as along the line: the line shows the true-scale profile.
     MatchScale,
@@ -90,6 +100,7 @@ pub enum HeightGain {
 
 /// What happens after the last profile.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "wasm", derive(tsify::Tsify))]
 pub enum EndMode {
     Loop,
     Bounce,
@@ -97,6 +108,7 @@ pub enum EndMode {
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "wasm", derive(tsify::Tsify))]
 #[serde(default)]
 pub struct LineParams {
     /// Peak intensity in percent (100 % = full pixel value).
@@ -127,6 +139,7 @@ impl Default for LineParams {
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "wasm", derive(tsify::Tsify))]
 #[serde(default)]
 pub struct ProfileParams {
     pub kind: ProfileKind,
@@ -147,6 +160,7 @@ impl Default for ProfileParams {
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "wasm", derive(tsify::Tsify))]
 #[serde(default)]
 pub struct ColorParams {
     pub mode: ColorMode,
@@ -165,6 +179,7 @@ impl Default for ColorParams {
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "wasm", derive(tsify::Tsify))]
 #[serde(default)]
 pub struct MotionParams {
     pub kind: MotionKind,
@@ -193,6 +208,7 @@ impl Default for MotionParams {
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "wasm", derive(tsify::Tsify))]
 #[serde(default)]
 pub struct DeformParams {
     pub kind: DeformKind,
@@ -226,6 +242,7 @@ impl Default for DeformParams {
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "wasm", derive(tsify::Tsify))]
 #[serde(default)]
 pub struct NoiseParams {
     /// Ambient (background) light level in percent.
@@ -254,6 +271,7 @@ impl Default for NoiseParams {
 
 /// Display and playback of a sliced object scan (the scan itself is not a parameter).
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "wasm", derive(tsify::Tsify))]
 #[serde(default)]
 pub struct ScanParams {
     /// Shape the line from the loaded scan instead of the synthetic deformation.
@@ -288,6 +306,7 @@ impl Default for ScanParams {
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "wasm", derive(tsify::Tsify))]
 #[serde(default)]
 pub struct LaserParams {
     pub line: LineParams,
