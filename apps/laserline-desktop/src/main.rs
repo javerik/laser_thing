@@ -1,14 +1,11 @@
 mod app;
-mod mesh;
+mod files;
+mod laser_ui;
 mod mesh_view;
-mod model;
-mod params;
-mod presets;
+mod native_files;
 mod renderer;
-mod scan;
-mod scan_file;
-mod scan_view;
-mod ui;
+mod slicer_ui;
+mod worker;
 
 use eframe::egui;
 

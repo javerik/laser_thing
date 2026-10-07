@@ -3,7 +3,6 @@
 use crate::params::{
     ColorMode, DeformKind, LaserParams, LengthUnit, MotionKind, Orientation, ProfileKind, SweepMode,
 };
-use std::path::PathBuf;
 
 pub fn builtin() -> Vec<(&'static str, LaserParams)> {
     let base = LaserParams::default();
@@ -66,28 +65,6 @@ pub fn to_json(p: &LaserParams) -> Result<String, String> {
 
 pub fn from_json(s: &str) -> Result<LaserParams, String> {
     serde_json::from_str(s).map_err(|e| e.to_string())
-}
-
-fn dialog() -> rfd::FileDialog {
-    rfd::FileDialog::new().add_filter("Laser preset", &["json"])
-}
-
-/// Returns `Ok(None)` if the user cancelled.
-pub fn save_dialog(p: &LaserParams) -> Result<Option<PathBuf>, String> {
-    let Some(path) = dialog().set_file_name("laser_preset.json").save_file() else {
-        return Ok(None);
-    };
-    std::fs::write(&path, to_json(p)?).map_err(|e| format!("{}: {e}", path.display()))?;
-    Ok(Some(path))
-}
-
-/// Returns `Ok(None)` if the user cancelled.
-pub fn load_dialog() -> Result<Option<(LaserParams, PathBuf)>, String> {
-    let Some(path) = dialog().pick_file() else {
-        return Ok(None);
-    };
-    let text = std::fs::read_to_string(&path).map_err(|e| format!("{}: {e}", path.display()))?;
-    Ok(Some((from_json(&text)?, path)))
 }
 
 #[cfg(test)]

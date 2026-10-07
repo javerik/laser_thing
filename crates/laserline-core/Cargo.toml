@@ -1,0 +1,20 @@
+[package]
+name = "laserline-core"
+description = "Laser line emulation and laser-triangulation slicing of STL meshes, without GUI or GPU dependencies"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+
+[features]
+# Exposes test helpers (`mesh::box_mesh`) to other crates' tests.
+test-utils = []
+
+[dependencies]
+bytemuck.workspace = true
+glam.workspace = true
+serde.workspace = true
+serde_json.workspace = true

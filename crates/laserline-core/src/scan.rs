@@ -7,7 +7,8 @@
 //! triangulation angle from vertical; surface between it and the laser line can
 //! hide parts of the profile (camera occlusion).
 //!
-//! Pure and GUI-free so it can be unit-tested.
+//! Pure and GUI-free so it can be unit-tested. Natively the work is split over
+//! threads in bands of rows; on wasm32 the bands run one after another.
 
 use crate::mesh::{self, Mesh};
 use crate::params::{EndMode, HeightGain, ScanParams, ScanScale};
@@ -15,7 +16,7 @@ use serde::{Deserialize, Serialize};
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 
 /// One profile maps onto the line's deformation buffer, so wider grids add nothing.
-pub const MAX_COLS: usize = crate::renderer::DEFORM_SAMPLES;
+pub const MAX_COLS: usize = crate::DEFORM_SAMPLES;
 pub const MAX_ROWS: usize = 20_000;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -256,8 +257,30 @@ pub fn slice(mesh: &Mesh, s: &SliceSettings, source: &str, cancel: &AtomicBool, 
     Ok(Scan { meta, height, visible })
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn threads() -> usize {
     std::thread::available_parallelism().map_or(4, |n| n.get()).min(32)
+}
+
+#[cfg(target_arch = "wasm32")]
+fn threads() -> usize {
+    1
+}
+
+/// Runs `f(band, chunk)` for each `band_len`-sized chunk of `data`, in parallel where
+/// threads are available.
+fn for_each_band<T: Send>(data: &mut [T], band_len: usize, f: impl Fn(usize, &mut [T]) + Sync) {
+    #[cfg(not(target_arch = "wasm32"))]
+    std::thread::scope(|scope| {
+        for (band, chunk) in data.chunks_mut(band_len).enumerate() {
+            let f = &f;
+            scope.spawn(move || f(band, chunk));
+        }
+    });
+    #[cfg(target_arch = "wasm32")]
+    for (band, chunk) in data.chunks_mut(band_len).enumerate() {
+        f(band, chunk);
+    }
 }
 
 /// Topmost surface per grid cell (z-buffer max); `-inf` where nothing is hit.
@@ -268,24 +291,19 @@ fn rasterize(pts: &[[f32; 3]], tris: &[[u32; 3]], m: &ScanMeta, cancel: &AtomicB
     let done = AtomicU32::new(0);
     let total = (tris.len() * m.rows.div_ceil(band_rows)).max(1) as f64;
 
-    std::thread::scope(|scope| {
-        for (band, chunk) in height.chunks_mut(band_rows * m.cols).enumerate() {
-            let done = &done;
-            scope.spawn(move || {
-                let j0 = band * band_rows;
-                let j1 = j0 + chunk.len() / m.cols; // exclusive
-                for (n, t) in tris.iter().enumerate() {
-                    if n % 4096 == 0 {
-                        if cancel.load(Ordering::Relaxed) {
-                            return;
-                        }
-                        let d = done.fetch_add(4096, Ordering::Relaxed) as f64;
-                        progress.store((d / total * 900.0).min(900.0) as u32, Ordering::Relaxed);
-                    }
-                    let tri = t.map(|i| pts[i as usize]);
-                    raster_triangle(&tri, m, j0, j1, chunk);
+    for_each_band(&mut height, band_rows * m.cols, |band, chunk| {
+        let j0 = band * band_rows;
+        let j1 = j0 + chunk.len() / m.cols; // exclusive
+        for (n, t) in tris.iter().enumerate() {
+            if n % 4096 == 0 {
+                if cancel.load(Ordering::Relaxed) {
+                    return;
                 }
-            });
+                let d = done.fetch_add(4096, Ordering::Relaxed) as f64;
+                progress.store((d / total * 900.0).min(900.0) as u32, Ordering::Relaxed);
+            }
+            let tri = t.map(|i| pts[i as usize]);
+            raster_triangle(&tri, m, j0, j1, chunk);
         }
     });
     if cancel.load(Ordering::Relaxed) {
@@ -364,38 +382,34 @@ fn occlusion(height: &[f32], m: &ScanMeta, cancel: &AtomicBool) -> Result<Vec<u8
     let mut visible = vec![0u8; height.len()];
     let band_rows = m.rows.div_ceil(threads()).max(1);
 
-    std::thread::scope(|scope| {
-        for (band, chunk) in visible.chunks_mut(band_rows * m.cols).enumerate() {
-            scope.spawn(move || {
-                for (k, out) in chunk.iter_mut().enumerate() {
-                    if k % m.cols == 0 && cancel.load(Ordering::Relaxed) {
-                        return;
-                    }
-                    let (i, j) = (k % m.cols, band * band_rows + k / m.cols);
-                    let h = height[j * m.cols + i];
-                    if !h.is_finite() {
-                        continue;
-                    }
-                    let mut seen = true;
-                    let mut step = 1;
-                    loop {
-                        let ray = h + step as f32 * rise;
-                        if ray > m.z_max_mm {
-                            break;
-                        }
-                        let jj = j as isize + dir * step as isize;
-                        if jj < 0 || jj >= m.rows as isize {
-                            break;
-                        }
-                        if height[jj as usize * m.cols + i] > ray + eps {
-                            seen = false;
-                            break;
-                        }
-                        step += 1;
-                    }
-                    *out = seen as u8;
+    for_each_band(&mut visible, band_rows * m.cols, |band, chunk| {
+        for (k, out) in chunk.iter_mut().enumerate() {
+            if k % m.cols == 0 && cancel.load(Ordering::Relaxed) {
+                return;
+            }
+            let (i, j) = (k % m.cols, band * band_rows + k / m.cols);
+            let h = height[j * m.cols + i];
+            if !h.is_finite() {
+                continue;
+            }
+            let mut seen = true;
+            let mut step = 1;
+            loop {
+                let ray = h + step as f32 * rise;
+                if ray > m.z_max_mm {
+                    break;
                 }
-            });
+                let jj = j as isize + dir * step as isize;
+                if jj < 0 || jj >= m.rows as isize {
+                    break;
+                }
+                if height[jj as usize * m.cols + i] > ray + eps {
+                    seen = false;
+                    break;
+                }
+                step += 1;
+            }
+            *out = seen as u8;
         }
     });
     if cancel.load(Ordering::Relaxed) {
@@ -405,7 +419,7 @@ fn occlusion(height: &[f32], m: &ScanMeta, cancel: &AtomicBool) -> Result<Vec<u8
 }
 
 /// How scan millimetres land on the screen.
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq, Serialize)]
 pub struct DisplayMapping {
     /// Screen pixels per mm along the line.
     pub px_per_mm: f32,
@@ -496,7 +510,7 @@ pub fn step(pos: f64, rows: usize, end: EndMode, delta: isize) -> f64 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::mesh::tests::box_mesh;
+    use crate::mesh::box_mesh;
 
     fn run(mesh: &Mesh, s: &SliceSettings) -> Scan {
         slice(mesh, s, "test", &AtomicBool::new(false), &Progress::new(0)).unwrap()

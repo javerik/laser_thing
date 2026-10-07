@@ -1,39 +1,205 @@
-//! Control panel widgets. The same UI is used docked and detached.
+//! Control panel and live view of the laser line. The same UI is used docked and
+//! detached; window management stays with the application.
 
-use crate::app::{DockState, LaserApp};
-use crate::model;
-use crate::params::{
-    ColorMode, ColorParams, DeformKind, DeformParams, EndMode, LaserParams, LengthUnit, LineParams,
-    MotionKind, MotionParams, NoiseParams, Orientation, ProfileKind, ProfileParams, RateMode,
-    HeightGain, ScanParams, ScanScale, SweepMode,
-};
-use crate::presets;
-use crate::scan_view::{profile_plot, scan_summary};
+use crate::files::{FileHost, FileKind, OpenedFile};
+use crate::renderer::{LaserCallback, LaserResources};
+use crate::mesh_view::MeshViewResources;
+use crate::slicer_ui::{profile_plot, scan_summary};
+use crate::worker::SliceWorker;
 use eframe::egui::{self, Color32, RichText, Slider, Stroke, Ui};
-use std::time::Duration;
+use eframe::egui_wgpu;
+use laserline_core::emulator::{Emulator, LiveInfo};
+use laserline_core::model;
+use laserline_core::params::{
+    ColorMode, ColorParams, DeformKind, DeformParams, EndMode, HeightGain, LaserParams, LengthUnit, LineParams,
+    MotionKind, MotionParams, NoiseParams, Orientation, ProfileKind, ProfileParams, RateMode, ScanParams, ScanScale,
+    SweepMode,
+};
+use laserline_core::scan::{DisplayMapping, Scan, SliceSettings};
+use laserline_core::slicer::Slicer;
+use laserline_core::{mesh, presets, scan_file};
+use std::sync::Arc;
 
 const WAVELENGTH_PRESETS: [f32; 5] = [405.0, 450.0, 520.0, 635.0, 660.0];
+/// How long a status message stays visible, in seconds.
+const STATUS_S: f64 = 5.0;
 
-impl LaserApp {
-    pub fn controls_ui(&mut self, ui: &mut Ui) {
+/// The emulator with its slicer and everything the panels show.
+pub struct LaserUi {
+    pub emu: Emulator,
+    pub slicer: Slicer,
+    /// The slicer window / panel is shown.
+    pub slicer_open: bool,
+    /// Measured while drawing the last live view.
+    pub live: LiveInfo,
+    pub preset_index: usize,
+    status: Option<(String, f64)>,
+    now: f64,
+    pub(crate) worker: SliceWorker,
+    pub(crate) range_image: Option<(egui::TextureHandle, Arc<Scan>)>,
+    srgb_target: bool,
+}
+
+impl LaserUi {
+    /// Registers the GPU resources of the live and 3D views with egui's wgpu renderer.
+    pub fn install_gpu(rs: &egui_wgpu::RenderState) {
+        let mut renderer = rs.renderer.write();
+        renderer.callback_resources.insert(LaserResources::new(&rs.device, rs.target_format));
+        renderer.callback_resources.insert(MeshViewResources::new(&rs.device, rs.target_format));
+    }
+
+    /// `srgb_target`: the render target encodes sRGB itself (`TextureFormat::is_srgb`).
+    pub fn new(params: LaserParams, slice: SliceSettings, auto_slice: bool, srgb_target: bool) -> Self {
+        Self {
+            emu: Emulator::new(params),
+            slicer: Slicer::new(slice, auto_slice),
+            slicer_open: false,
+            live: LiveInfo::default(),
+            preset_index: 0,
+            status: None,
+            now: 0.0,
+            worker: SliceWorker::default(),
+            range_image: None,
+            srgb_target,
+        }
+    }
+
+    pub fn srgb_target(&self) -> bool {
+        self.srgb_target
+    }
+
+    /// Call once per displayed frame, before drawing: collects finished slices,
+    /// starts due re-slices and advances the emulator by `dt` seconds.
+    pub fn begin_frame(&mut self, ctx: &egui::Context, dt: f64) {
+        self.now = ctx.input(|i| i.time);
+        if let Some(scan) = self.worker.poll(&mut self.slicer, self.now) {
+            self.emu.set_scan(scan);
+        }
+        self.emu.tick(dt);
+    }
+
+    pub fn set_status(&mut self, msg: impl Into<String>) {
+        self.status = Some((msg.into(), self.now));
+    }
+
+    /// The latest status message while it is fresh.
+    pub fn status(&self) -> Option<&str> {
+        self.status.as_ref().filter(|(_, at)| self.now - at < STATUS_S).map(|(m, _)| m.as_str())
+    }
+
+    /// Starts slicing the model with the current settings.
+    pub fn slice_now(&mut self) {
+        if let Some(req) = self.slicer.start() {
+            self.worker.spawn(req);
+        }
+    }
+
+    /// Loads an STL model into the slicer and shows it.
+    pub fn open_model(&mut self, file: OpenedFile) -> Result<(), String> {
+        let mesh = mesh::parse_stl(&file.bytes).map_err(|e| format!("{}: {e}", file.location))?;
+        let n = mesh.triangles.len();
+        if let Some(req) = self.slicer.set_model(mesh, file.name, file.location.clone()) {
+            self.worker.spawn(req);
+        }
+        self.slicer_open = true;
+        self.set_status(format!("Imported {} ({n} triangles)", file.location));
+        Ok(())
+    }
+
+    /// Plays an `.lscan` file.
+    pub fn open_scan(&mut self, file: OpenedFile) -> Result<(), String> {
+        let scan = scan_file::from_bytes(&file.bytes).map_err(|e| format!("{}: {e}", file.location))?;
+        self.adopt_scan(scan);
+        self.set_status(format!("Loaded {}", file.location));
+        Ok(())
+    }
+
+    /// Opens a model or a scan, chosen by the file extension.
+    pub fn open_file(&mut self, file: OpenedFile) -> Result<(), String> {
+        let ext = file.name.rsplit_once('.').map_or("", |(_, e)| e).to_ascii_lowercase();
+        match ext.as_str() {
+            "stl" => self.open_model(file),
+            "lscan" => self.open_scan(file),
+            _ => Err(format!("{}: expected an .stl or .lscan file", file.location)),
+        }
+    }
+
+    /// Plays a scan loaded from a file. It replaces the model so the previews match what
+    /// plays back, and its settings are shown (and reused if the model is imported again).
+    pub fn adopt_scan(&mut self, scan: Scan) {
+        self.slicer.clear_model();
+        self.slicer.settings = scan.meta.settings.clone();
+        self.emu.pos = 0.0;
+        self.emu.set_scan(scan);
+    }
+
+    pub fn import_stl(&mut self, files: &mut dyn FileHost) {
+        let result = files.open(FileKind::Stl).and_then(|f| f.map_or(Ok(()), |f| self.open_model(f)));
+        if let Err(e) = result {
+            self.set_status(format!("Import failed: {e}"));
+        }
+    }
+
+    pub fn load_scan(&mut self, files: &mut dyn FileHost) {
+        let result = files.open(FileKind::Scan).and_then(|f| f.map_or(Ok(()), |f| self.open_scan(f)));
+        if let Err(e) = result {
+            self.set_status(format!("Load failed: {e}"));
+        }
+    }
+
+    pub fn save_scan(&mut self, files: &mut dyn FileHost) {
+        let Some(scan) = &self.emu.scan else { return };
+        let result = scan_file::to_bytes(scan).and_then(|b| files.save(FileKind::Scan, &scan_file::file_name(scan), &b));
+        match result {
+            Ok(Some(path)) => self.set_status(format!("Saved {path}")),
+            Ok(None) => {}
+            Err(e) => self.set_status(format!("Save failed: {e}")),
+        }
+    }
+
+    /// Handles the playback keys (Space, R, ←, →); returns whether `key` was one.
+    pub fn handle_key(&mut self, key: egui::Key) -> bool {
+        match key {
+            egui::Key::Space => self.emu.playing = !self.emu.playing,
+            egui::Key::R => self.emu.reset_time(),
+            egui::Key::ArrowLeft => self.emu.step_scan(-1),
+            egui::Key::ArrowRight => self.emu.step_scan(1),
+            _ => return false,
+        }
+        true
+    }
+
+    /// Draws the laser line into `rect` and records the measurements in `self.live`.
+    pub fn live_view(&mut self, ui: &mut Ui, rect: egui::Rect) {
+        let ppp = ui.ctx().pixels_per_point();
+        let origin = [rect.min.x * ppp, rect.min.y * ppp];
+        let size = [rect.width() * ppp, rect.height() * ppp];
+        let frame = self.emu.frame(origin, size, self.srgb_target);
+        self.live = frame.info;
+        ui.painter().add(egui_wgpu::Callback::new_paint_callback(
+            rect,
+            LaserCallback { uniforms: frame.uniforms, deform: frame.deform },
+        ));
+    }
+
+    /// Transport, all parameter sections, object scan, presets and readouts.
+    pub fn controls_ui(&mut self, ui: &mut Ui, files: &mut dyn FileHost) {
         ui.spacing_mut().slider_width = 170.0;
-        self.header_ui(ui);
-        ui.separator();
         self.transport_ui(ui);
         ui.separator();
 
         let extent = self.live.extent_along_px;
         let length_px = self.live.length_px;
-        let p = &mut self.params;
+        let p = &mut self.emu.params;
         section(ui, "Line", true, &mut p.line, |ui, l| line_ui(ui, l, extent));
         let width = p.line.width_px;
         section(ui, "Profile", true, &mut p.profile, |ui, pr| profile_ui(ui, pr, width));
         section(ui, "Color", false, &mut p.color, color_ui);
         let offset = self.live.offset_px;
         section(ui, "Movement", true, &mut p.motion, |ui, m| motion_ui(ui, m, offset));
-        let t = self.sim_time;
-        let scan_drives = self.params.scan.enabled && self.scan.scan.is_some();
-        let p = &mut self.params;
+        let t = self.emu.sim_time;
+        let scan_drives = self.emu.scan_drives_line();
+        let p = &mut self.emu.params;
         section(ui, "Deformation", false, &mut p.deform, |ui, d| {
             if scan_drives {
                 ui.label(RichText::new("The object scan shapes the line; this deformation is inactive.").weak());
@@ -44,63 +210,42 @@ impl LaserApp {
 
         egui::CollapsingHeader::new(RichText::new("Object scan").strong())
             .default_open(true)
-            .show(ui, |ui| self.object_scan_ui(ui));
+            .show(ui, |ui| self.object_scan_ui(ui, files));
 
         egui::CollapsingHeader::new(RichText::new("Presets").strong())
             .default_open(true)
-            .show(ui, |ui| self.presets_ui(ui));
+            .show(ui, |ui| self.presets_ui(ui, files));
 
         ui.separator();
         self.readout_ui(ui);
     }
 
-    fn header_ui(&mut self, ui: &mut Ui) {
+    pub fn transport_ui(&mut self, ui: &mut Ui) {
+        let emu = &mut self.emu;
         ui.horizontal(|ui| {
-            ui.heading("Laser Line");
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                if ui.button("Hide").on_hover_text("Hide controls (H in live view)").clicked() {
-                    self.toggle_hidden();
-                }
-                let fs = if self.fullscreen { "Windowed" } else { "Fullscreen" };
-                if ui.button(fs).on_hover_text("Toggle live view fullscreen (F11)").clicked() {
-                    self.set_fullscreen(ui.ctx(), !self.fullscreen);
-                }
-                let (label, tip) = match self.dock {
-                    DockState::Docked => ("⏏ Detach", "Move controls into their own window (D)"),
-                    _ => ("Dock", "Dock controls into the live view (D)"),
-                };
-                if ui.button(label).on_hover_text(tip).clicked() {
-                    self.toggle_detached();
-                }
-            });
-        });
-    }
-
-    fn transport_ui(&mut self, ui: &mut Ui) {
-        ui.horizontal(|ui| {
-            let play = if self.playing { "⏸ Pause" } else { "▶ Play" };
+            let play = if emu.playing { "⏸ Pause" } else { "▶ Play" };
             if ui.add_sized([80.0, 22.0], egui::Button::new(play)).on_hover_text("Space").clicked() {
-                self.playing = !self.playing;
+                emu.playing = !emu.playing;
             }
             if ui.button("⟲ Reset time").on_hover_text("R (also rewinds the object scan)").clicked() {
-                self.reset_time();
+                emu.reset_time();
             }
-            ui.label(format!("t = {:.2} s", self.sim_time));
+            ui.label(format!("t = {:.2} s", emu.sim_time));
         });
         ui.horizontal(|ui| {
             ui.label("Speed");
             ui.add(
-                Slider::new(&mut self.params.time_scale, 0.05..=10.0)
+                Slider::new(&mut emu.params.time_scale, 0.05..=10.0)
                     .logarithmic(true)
                     .suffix("×"),
             );
             if ui.small_button("1×").clicked() {
-                self.params.time_scale = 1.0;
+                emu.params.time_scale = 1.0;
             }
         });
     }
 
-    fn presets_ui(&mut self, ui: &mut Ui) {
+    pub fn presets_ui(&mut self, ui: &mut Ui, files: &mut dyn FileHost) {
         let builtin = presets::builtin();
         ui.horizontal(|ui| {
             self.preset_index = self.preset_index.min(builtin.len() - 1);
@@ -114,97 +259,103 @@ impl LaserApp {
                 });
             if ui.button("Apply").clicked() {
                 let (name, p) = &builtin[self.preset_index];
-                self.params = p.clone();
-                self.sim_time = 0.0;
+                self.emu.params = p.clone();
+                self.emu.sim_time = 0.0;
                 self.set_status(format!("Applied “{name}”"));
             }
         });
         ui.horizontal(|ui| {
             if ui.button("💾 Save…").clicked() {
-                match presets::save_dialog(&self.params) {
-                    Ok(Some(path)) => self.set_status(format!("Saved {}", path.display())),
+                let result = presets::to_json(&self.emu.params).and_then(|json| files.save(FileKind::Preset, "laser_preset.json", json.as_bytes()));
+                match result {
+                    Ok(Some(path)) => self.set_status(format!("Saved {path}")),
                     Ok(None) => {}
                     Err(e) => self.set_status(format!("Save failed: {e}")),
                 }
             }
             if ui.button("📂 Load…").clicked() {
-                match presets::load_dialog() {
+                let result = files.open(FileKind::Preset).and_then(|f| {
+                    f.map(|f| {
+                        let text = String::from_utf8(f.bytes).map_err(|e| format!("{}: {e}", f.location))?;
+                        Ok((presets::from_json(&text)?, f.location))
+                    })
+                    .transpose()
+                });
+                match result {
                     Ok(Some((p, path))) => {
-                        self.params = p;
-                        self.set_status(format!("Loaded {}", path.display()));
+                        self.emu.params = p;
+                        self.set_status(format!("Loaded {path}"));
                     }
                     Ok(None) => {}
                     Err(e) => self.set_status(format!("Load failed: {e}")),
                 }
             }
             if ui.button("Reset all").clicked() {
-                self.params = LaserParams::default();
+                self.emu.params = LaserParams::default();
                 self.set_status("All parameters reset");
             }
         });
-        if let Some((msg, at)) = &self.status
-            && at.elapsed() < Duration::from_secs(5)
-        {
+        if let Some(msg) = self.status() {
             ui.label(RichText::new(msg).weak());
         }
     }
 
-    fn object_scan_ui(&mut self, ui: &mut Ui) {
+    pub fn object_scan_ui(&mut self, ui: &mut Ui, files: &mut dyn FileHost) {
         ui.horizontal_wrapped(|ui| {
             if ui.button("📂 Import STL…").clicked() {
-                self.import_stl();
+                self.import_stl(files);
             }
-            let open = self.scan.slicer.open;
+            let open = self.slicer_open;
             if ui.selectable_label(open, "🔧 Slicer").on_hover_text("Slice settings and 3D preview").clicked() {
-                self.scan.slicer.open = !open;
+                self.slicer_open = !open;
             }
             if ui.button("Load scan…").clicked() {
-                self.load_scan();
+                self.load_scan(files);
             }
-            if ui.add_enabled(self.scan.scan.is_some(), egui::Button::new("Save scan…")).clicked() {
-                self.save_scan();
+            if ui.add_enabled(self.emu.scan.is_some(), egui::Button::new("Save scan…")).clicked() {
+                self.save_scan(files);
             }
         });
-        if self.scan.slicer.is_busy() {
+        if self.slicer.is_busy() {
             ui.add(egui::Spinner::new());
         }
-        let Some(scan) = self.scan.scan.clone() else {
+        let Some(scan) = self.emu.scan.clone() else {
             ui.label(RichText::new("No scan loaded. Import an STL model or load a .lscan file.").weak());
             return;
         };
         scan_summary(ui, &scan);
-        ui.checkbox(&mut self.params.scan.enabled, "Drive the line from the scan");
+        ui.checkbox(&mut self.emu.params.scan.enabled, "Drive the line from the scan");
 
-        let row = self.current_row();
+        let row = self.emu.current_row();
         let live = self.live.scan;
         let angle = scan.meta.settings.triangulation_deg;
-        scan_params_ui(ui, &mut self.params.scan, live, angle);
+        scan_params_ui(ui, &mut self.emu.params.scan, live, angle);
 
         ui.add_space(4.0);
         let rows = scan.meta.rows;
         ui.horizontal(|ui| {
             if ui.small_button("◀").on_hover_text("Previous profile (←)").clicked() {
-                self.step_scan(-1);
+                self.emu.step_scan(-1);
             }
             if ui.small_button("▶").on_hover_text("Next profile (→)").clicked() {
-                self.step_scan(1);
+                self.emu.step_scan(1);
             }
             let mut r = row;
             if ui.add(Slider::new(&mut r, 0..=rows - 1).text("profile")).changed() {
-                self.scan.pos = r as f64;
+                self.emu.seek_row(r);
             }
         });
         profile_plot(ui, &scan, row, 56.0);
         ui.horizontal(|ui| {
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 if ui.small_button("↺ Reset").on_hover_text("Reset scan display & playback to defaults").clicked() {
-                    self.params.scan = ScanParams::default();
+                    self.emu.params.scan = ScanParams::default();
                 }
             });
         });
     }
 
-    fn readout_ui(&self, ui: &mut Ui) {
+    pub fn readout_ui(&self, ui: &mut Ui) {
         let l = &self.live;
         egui::Grid::new("readout").num_columns(2).show(ui, |ui| {
             ui.label("View");
@@ -217,20 +368,14 @@ impl LaserApp {
             ui.label(format!("{:.0} px", l.length_px));
             ui.end_row();
             ui.label("Frame rate");
-            ui.label(format!("{:.0} fps", self.fps));
+            ui.label(format!("{:.0} fps", self.emu.fps));
             ui.end_row();
         });
-        ui.add_space(4.0);
-        ui.label(
-            RichText::new("Keys: F11 fullscreen · Esc exit · D dock/detach · H hide · Space play/pause · R reset time · ←/→ step scan profile · double-click view = fullscreen")
-                .small()
-                .weak(),
-        );
     }
 }
 
 /// Collapsible section with a "Reset" button restoring the section defaults.
-pub(crate) fn section<T: Default>(ui: &mut Ui, title: &str, open: bool, value: &mut T, body: impl FnOnce(&mut Ui, &mut T)) {
+pub fn section<T: Default>(ui: &mut Ui, title: &str, open: bool, value: &mut T, body: impl FnOnce(&mut Ui, &mut T)) {
     egui::CollapsingHeader::new(RichText::new(title).strong())
         .default_open(open)
         .show(ui, |ui| {
@@ -245,17 +390,17 @@ pub(crate) fn section<T: Default>(ui: &mut Ui, title: &str, open: bool, value: &
         });
 }
 
-pub(crate) fn grid(ui: &mut Ui, id: &str, body: impl FnOnce(&mut Ui)) {
+pub fn grid(ui: &mut Ui, id: &str, body: impl FnOnce(&mut Ui)) {
     egui::Grid::new(id).num_columns(2).spacing([10.0, 6.0]).show(ui, body);
 }
 
-pub(crate) fn row(ui: &mut Ui, label: &str, widget: impl FnOnce(&mut Ui)) {
+pub fn row(ui: &mut Ui, label: &str, widget: impl FnOnce(&mut Ui)) {
     ui.label(label);
     widget(ui);
     ui.end_row();
 }
 
-fn line_ui(ui: &mut Ui, l: &mut LineParams, extent_along: f32) {
+pub fn line_ui(ui: &mut Ui, l: &mut LineParams, extent_along: f32) {
     grid(ui, "line_grid", |ui| {
         row(ui, "Intensity", |ui| {
             ui.add(Slider::new(&mut l.intensity_pct, 0.0..=100.0).suffix(" %"))
@@ -319,7 +464,7 @@ fn line_ui(ui: &mut Ui, l: &mut LineParams, extent_along: f32) {
     });
 }
 
-fn profile_ui(ui: &mut Ui, p: &mut ProfileParams, width: f32) {
+pub fn profile_ui(ui: &mut Ui, p: &mut ProfileParams, width: f32) {
     ui.horizontal(|ui| {
         ui.selectable_value(&mut p.kind, ProfileKind::Gaussian, "Gaussian");
         ui.selectable_value(&mut p.kind, ProfileKind::TopHat, "Top-hat");
@@ -341,7 +486,7 @@ fn profile_ui(ui: &mut Ui, p: &mut ProfileParams, width: f32) {
     plot(ui, -half, half, 0.0, 1.0, |v| model::profile_intensity(p, width, v), "cross-section");
 }
 
-fn color_ui(ui: &mut Ui, c: &mut ColorParams) {
+pub fn color_ui(ui: &mut Ui, c: &mut ColorParams) {
     ui.horizontal(|ui| {
         ui.selectable_value(&mut c.mode, ColorMode::Wavelength, "Wavelength");
         ui.selectable_value(&mut c.mode, ColorMode::Custom, "Custom RGB");
@@ -375,7 +520,7 @@ fn color_ui(ui: &mut Ui, c: &mut ColorParams) {
     }
 }
 
-fn motion_ui(ui: &mut Ui, m: &mut MotionParams, offset: f32) {
+pub fn motion_ui(ui: &mut Ui, m: &mut MotionParams, offset: f32) {
     ui.horizontal(|ui| {
         ui.selectable_value(&mut m.kind, MotionKind::Static, "Static");
         ui.selectable_value(&mut m.kind, MotionKind::Sweep, "Sweep");
@@ -416,7 +561,7 @@ fn motion_ui(ui: &mut Ui, m: &mut MotionParams, offset: f32) {
     }
 }
 
-fn deform_ui(ui: &mut Ui, d: &mut DeformParams, length_px: f32, t: f64) {
+pub fn deform_ui(ui: &mut Ui, d: &mut DeformParams, length_px: f32, t: f64) {
     ui.horizontal_wrapped(|ui| {
         ui.selectable_value(&mut d.kind, DeformKind::None, "None");
         ui.selectable_value(&mut d.kind, DeformKind::Step, "Step");
@@ -477,7 +622,7 @@ fn px(v: &mut f32, range: std::ops::RangeInclusive<f32>) -> Slider<'_> {
 }
 
 /// Scale, height gain and playback of the scan. `live` is the mapping used in the last frame.
-fn scan_params_ui(ui: &mut Ui, s: &mut ScanParams, live: Option<crate::scan::DisplayMapping>, angle_deg: f32) {
+pub fn scan_params_ui(ui: &mut Ui, s: &mut ScanParams, live: Option<DisplayMapping>, angle_deg: f32) {
     grid(ui, "scan_grid", |ui| {
         row(ui, "Scale", |ui| {
             ui.horizontal(|ui| {
@@ -553,7 +698,7 @@ fn scan_params_ui(ui: &mut Ui, s: &mut ScanParams, live: Option<crate::scan::Dis
     });
 }
 
-fn noise_ui(ui: &mut Ui, n: &mut NoiseParams) {
+pub fn noise_ui(ui: &mut Ui, n: &mut NoiseParams) {
     grid(ui, "noise_grid", |ui| {
         row(ui, "Ambient light", |ui| {
             ui.add(Slider::new(&mut n.ambient_pct, 0.0..=50.0).suffix(" %"));
@@ -577,7 +722,7 @@ fn noise_ui(ui: &mut Ui, n: &mut NoiseParams) {
 }
 
 /// Small line plot of `f` over [x0, x1] with y range [y0, y1].
-fn plot(ui: &mut Ui, x0: f32, x1: f32, y0: f32, y1: f32, f: impl Fn(f32) -> f32, caption: &str) {
+pub fn plot(ui: &mut Ui, x0: f32, x1: f32, y0: f32, y1: f32, f: impl Fn(f32) -> f32, caption: &str) {
     let width = ui.available_width().min(340.0);
     let (rect, _) = ui.allocate_exact_size(egui::vec2(width, 56.0), egui::Sense::hover());
     let painter = ui.painter_at(rect);

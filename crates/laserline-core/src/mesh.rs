@@ -6,7 +6,6 @@
 
 use crate::scan::{SliceSettings, UpAxis};
 use std::collections::HashMap;
-use std::path::Path;
 
 #[derive(Clone, Debug, Default)]
 pub struct Mesh {
@@ -36,11 +35,7 @@ pub fn bounds(points: &[[f32; 3]]) -> ([f32; 3], [f32; 3]) {
     (lo, hi)
 }
 
-pub fn load_stl(path: &Path) -> Result<Mesh, String> {
-    let bytes = std::fs::read(path).map_err(|e| format!("{}: {e}", path.display()))?;
-    parse_stl(&bytes).map_err(|e| format!("{}: {e}", path.display()))
-}
-
+/// Parses a binary or ASCII STL file.
 pub fn parse_stl(bytes: &[u8]) -> Result<Mesh, String> {
     let mut builder = Builder::default();
     if is_binary(bytes) {
@@ -183,22 +178,23 @@ impl UpAxis {
     }
 }
 
+/// Axis-aligned box from `lo` to `hi` as 12 triangles (test helper).
+#[cfg(any(test, feature = "test-utils"))]
+pub fn box_mesh(lo: [f32; 3], hi: [f32; 3]) -> Mesh {
+    let c = |i: usize| [if i & 1 == 0 { lo[0] } else { hi[0] }, if i & 2 == 0 { lo[1] } else { hi[1] }, if i & 4 == 0 { lo[2] } else { hi[2] }];
+    let quads = [[0, 1, 3, 2], [4, 6, 7, 5], [0, 4, 5, 1], [2, 3, 7, 6], [0, 2, 6, 4], [1, 5, 7, 3]];
+    let mut b = Builder::default();
+    for q in quads {
+        b.push_triangle([c(q[0]), c(q[1]), c(q[2])]);
+        b.push_triangle([c(q[0]), c(q[2]), c(q[3])]);
+    }
+    b.mesh
+}
+
 #[cfg(test)]
-pub mod tests {
+mod tests {
     use super::*;
     use crate::scan::{Axis, ModelUnit};
-
-    /// Axis-aligned box from `lo` to `hi` as 12 triangles.
-    pub fn box_mesh(lo: [f32; 3], hi: [f32; 3]) -> Mesh {
-        let c = |i: usize| [if i & 1 == 0 { lo[0] } else { hi[0] }, if i & 2 == 0 { lo[1] } else { hi[1] }, if i & 4 == 0 { lo[2] } else { hi[2] }];
-        let quads = [[0, 1, 3, 2], [4, 6, 7, 5], [0, 4, 5, 1], [2, 3, 7, 6], [0, 2, 6, 4], [1, 5, 7, 3]];
-        let mut b = Builder::default();
-        for q in quads {
-            b.push_triangle([c(q[0]), c(q[1]), c(q[2])]);
-            b.push_triangle([c(q[0]), c(q[2]), c(q[3])]);
-        }
-        b.mesh
-    }
 
     fn to_binary(m: &Mesh) -> Vec<u8> {
         let mut out = b"solid but actually binary".to_vec();

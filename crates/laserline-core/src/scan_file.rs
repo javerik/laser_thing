@@ -3,12 +3,19 @@
 //! Layout (little endian): 6-byte magic, u16 version, u32 meta length, meta JSON
 //! (`ScanMeta`), `cols·rows` f32 heights (NaN = no surface), `cols·rows` u8 visibility.
 
-use crate::mesh::{self, Mesh};
 use crate::scan::{MAX_COLS, MAX_ROWS, Scan, ScanMeta};
-use std::path::{Path, PathBuf};
 
-const MAGIC: &[u8; 6] = b"LSCAN\0";
-const VERSION: u16 = 1;
+pub const MAGIC: &[u8; 6] = b"LSCAN\0";
+pub const VERSION: u16 = 1;
+/// File extension of scan files, without the dot.
+pub const EXTENSION: &str = "lscan";
+
+/// Suggested file name for saving `scan`: the model's file stem plus `.lscan`.
+pub fn file_name(scan: &Scan) -> String {
+    let base = scan.meta.source.rsplit(['/', '\\']).next().unwrap_or("");
+    let stem = base.rsplit_once('.').map_or(base, |(stem, _)| stem);
+    format!("{}.{EXTENSION}", if stem.is_empty() { "scan" } else { stem })
+}
 
 pub fn to_bytes(scan: &Scan) -> Result<Vec<u8>, String> {
     let meta = serde_json::to_vec(&scan.meta).map_err(|e| e.to_string())?;
@@ -49,42 +56,10 @@ pub fn from_bytes(bytes: &[u8]) -> Result<Scan, String> {
     Ok(Scan { meta, height, visible })
 }
 
-/// Returns `Ok(None)` if the user cancelled.
-pub fn save_dialog(scan: &Scan) -> Result<Option<PathBuf>, String> {
-    let stem = Path::new(&scan.meta.source).file_stem().and_then(|s| s.to_str()).unwrap_or("scan");
-    let Some(path) = rfd::FileDialog::new()
-        .add_filter("Laser scan", &["lscan"])
-        .set_file_name(format!("{stem}.lscan"))
-        .save_file()
-    else {
-        return Ok(None);
-    };
-    std::fs::write(&path, to_bytes(scan)?).map_err(|e| format!("{}: {e}", path.display()))?;
-    Ok(Some(path))
-}
-
-/// Returns `Ok(None)` if the user cancelled.
-pub fn load_dialog() -> Result<Option<(Scan, PathBuf)>, String> {
-    let Some(path) = rfd::FileDialog::new().add_filter("Laser scan", &["lscan"]).pick_file() else {
-        return Ok(None);
-    };
-    let bytes = std::fs::read(&path).map_err(|e| format!("{}: {e}", path.display()))?;
-    let scan = from_bytes(&bytes).map_err(|e| format!("{}: {e}", path.display()))?;
-    Ok(Some((scan, path)))
-}
-
-/// Returns `Ok(None)` if the user cancelled.
-pub fn import_stl_dialog() -> Result<Option<(Mesh, PathBuf)>, String> {
-    let Some(path) = rfd::FileDialog::new().add_filter("STL model", &["stl", "STL"]).pick_file() else {
-        return Ok(None);
-    };
-    Ok(Some((mesh::load_stl(&path)?, path)))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::mesh::tests::box_mesh;
+    use crate::mesh::box_mesh;
     use crate::scan::{Progress, SliceSettings, slice};
     use std::sync::atomic::AtomicBool;
 
@@ -104,6 +79,16 @@ mod tests {
         // NaN != NaN, so compare bit patterns.
         let bits = |s: &Scan| s.height.iter().map(|h| h.to_bits()).collect::<Vec<_>>();
         assert_eq!(bits(&back), bits(&scan));
+    }
+
+    #[test]
+    fn suggested_names() {
+        let mut scan = sample();
+        assert_eq!(file_name(&scan), "box.lscan");
+        scan.meta.source = "/models/part.v2.stl".into();
+        assert_eq!(file_name(&scan), "part.v2.lscan");
+        scan.meta.source = String::new();
+        assert_eq!(file_name(&scan), "scan.lscan");
     }
 
     #[test]

@@ -2,34 +2,8 @@
 //! paint callback so the live view can be any egui rect.
 
 use eframe::{egui_wgpu, wgpu};
-
-/// Number of deformation samples uploaded per frame.
-pub const DEFORM_SAMPLES: usize = 8192;
-
-/// Must match `struct Uniforms` in `laser.wgsl` (16-byte groups).
-#[repr(C)]
-#[derive(Clone, Copy, Debug, Default, bytemuck::Pod, bytemuck::Zeroable)]
-pub struct Uniforms {
-    pub center: [f32; 2],
-    pub dir: [f32; 2],
-    pub length: f32,
-    pub width: f32,
-    pub intensity: f32,
-    pub end_soft: f32,
-    pub color: [f32; 4],
-    pub profile: u32,
-    pub edge_soft: f32,
-    pub deform_start: f32,
-    pub deform_step: f32,
-    pub ambient: f32,
-    pub speckle: f32,
-    pub grain: f32,
-    pub noise: f32,
-    pub seed: u32,
-    pub deform_count: u32,
-    pub srgb_out: u32,
-    pub _pad: u32,
-}
+use laserline_core::DEFORM_SAMPLES;
+use laserline_core::gpu_types::Uniforms;
 
 pub struct LaserResources {
     pipeline: wgpu::RenderPipeline,

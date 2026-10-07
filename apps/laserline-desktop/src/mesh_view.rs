@@ -3,66 +3,13 @@
 
 use eframe::egui;
 use eframe::{egui_wgpu, wgpu};
-use glam::{Mat4, Vec3};
-use glam::camera::rh as camera;
+use laserline_core::gpu_types::{GpuMesh, LineVertex, Overlay, ViewUniforms};
 use std::sync::Arc;
 
 const COLOR_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm;
 const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
 const SAMPLES: u32 = 4;
 const BACKGROUND: wgpu::Color = wgpu::Color { r: 0.07, g: 0.075, b: 0.085, a: 1.0 };
-
-/// Must match `struct View` in `mesh.wgsl`.
-#[repr(C)]
-#[derive(Clone, Copy, Debug, Default, bytemuck::Pod, bytemuck::Zeroable)]
-pub struct ViewUniforms {
-    pub view_proj: [[f32; 4]; 4],
-    pub eye: [f32; 4],
-    pub z_range: [f32; 4],
-}
-
-#[repr(C)]
-#[derive(Clone, Copy, Debug, bytemuck::Pod, bytemuck::Zeroable)]
-pub struct LineVertex {
-    pub pos: [f32; 3],
-    pub color: [f32; 4],
-}
-
-/// Triangle mesh in scan-frame mm. `id` changes whenever the geometry does.
-pub struct GpuMesh {
-    pub id: u64,
-    pub positions: Vec<[f32; 3]>,
-    pub indices: Vec<u32>,
-}
-
-/// Overlay geometry, rebuilt every frame.
-#[derive(Default)]
-pub struct Overlay {
-    /// Translucent triangles (the laser plane), depth tested, not depth written.
-    pub triangles: Vec<LineVertex>,
-    /// Lines hidden by the object where it is in front of them.
-    pub lines: Vec<LineVertex>,
-    /// Lines always drawn on top (the current profile).
-    pub lines_on_top: Vec<LineVertex>,
-}
-
-impl Overlay {
-    pub fn line(&mut self, a: Vec3, b: Vec3, color: [f32; 4]) {
-        self.lines.push(LineVertex { pos: a.into(), color });
-        self.lines.push(LineVertex { pos: b.into(), color });
-    }
-
-    pub fn line_on_top(&mut self, a: Vec3, b: Vec3, color: [f32; 4]) {
-        self.lines_on_top.push(LineVertex { pos: a.into(), color });
-        self.lines_on_top.push(LineVertex { pos: b.into(), color });
-    }
-
-    pub fn quad(&mut self, c: [Vec3; 4], color: [f32; 4]) {
-        for i in [0, 1, 2, 0, 2, 3] {
-            self.triangles.push(LineVertex { pos: c[i].into(), color });
-        }
-    }
-}
 
 struct Targets {
     size: [u32; 2],
@@ -431,78 +378,6 @@ impl egui_wgpu::CallbackTrait for MeshViewCallback {
             render_pass.set_pipeline(&r.blit_pipeline);
             render_pass.set_bind_group(0, &t.blit_bind_group, &[]);
             render_pass.draw(0..3, 0..1);
-        }
-    }
-}
-
-/// Turntable camera around a target point, z up.
-#[derive(Clone, Copy, Debug)]
-pub struct OrbitCamera {
-    pub target: Vec3,
-    pub yaw: f32,
-    pub pitch: f32,
-    pub distance: f32,
-}
-
-impl OrbitCamera {
-    /// Three-quarter view framing a box from `lo` to `hi`.
-    pub fn framing(lo: Vec3, hi: Vec3) -> Self {
-        let radius = (0.5 * (hi - lo).length()).max(1.0);
-        Self { target: 0.5 * (lo + hi), yaw: -2.2, pitch: 0.55, distance: radius * 2.6 }
-    }
-
-    pub fn eye(&self) -> Vec3 {
-        let (sy, cy) = self.yaw.sin_cos();
-        let (sp, cp) = self.pitch.sin_cos();
-        self.target + self.distance * Vec3::new(cp * cy, cp * sy, sp)
-    }
-
-    pub fn view_proj(&self, aspect: f32) -> Mat4 {
-        let view = camera::view::look_at_mat4(self.eye(), self.target, Vec3::Z);
-        let near = (self.distance * 0.01).max(0.01);
-        // wgpu clip space is y-up with depth 0..1, the DirectX convention.
-        let proj = camera::proj::directx::perspective(40f32.to_radians(), aspect.max(1e-3), near, self.distance * 20.0 + 1.0);
-        proj * view
-    }
-
-    pub fn uniforms(&self, aspect: f32, z_max: f32) -> ViewUniforms {
-        ViewUniforms {
-            view_proj: self.view_proj(aspect).to_cols_array_2d(),
-            eye: self.eye().extend(1.0).into(),
-            z_range: [z_max, 0.0, 0.0, 0.0],
-        }
-    }
-
-    /// Screen position of `p` inside `rect`, or `None` behind the camera.
-    pub fn project(&self, rect: egui::Rect, p: Vec3) -> Option<egui::Pos2> {
-        let clip = self.view_proj(rect.aspect_ratio()) * p.extend(1.0);
-        if clip.w <= 1e-6 {
-            return None;
-        }
-        let ndc = clip.truncate() / clip.w;
-        Some(egui::pos2(
-            rect.left() + (ndc.x + 1.0) * 0.5 * rect.width(),
-            rect.top() + (1.0 - ndc.y) * 0.5 * rect.height(),
-        ))
-    }
-
-    /// Drag: orbit; secondary drag or shift-drag: pan; scroll / pinch: zoom.
-    pub fn handle_input(&mut self, ui: &egui::Ui, response: &egui::Response) {
-        let drag = response.drag_delta();
-        let shift = ui.input(|i| i.modifiers.shift);
-        if response.dragged_by(egui::PointerButton::Secondary) || (response.dragged_by(egui::PointerButton::Primary) && shift) {
-            let forward = (self.target - self.eye()).normalize_or_zero();
-            let right = forward.cross(Vec3::Z).normalize_or_zero();
-            let up = right.cross(forward);
-            let k = self.distance * 0.0015;
-            self.target += (-drag.x * right + drag.y * up) * k;
-        } else if response.dragged_by(egui::PointerButton::Primary) {
-            self.yaw -= drag.x * 0.008;
-            self.pitch = (self.pitch + drag.y * 0.008).clamp(-1.55, 1.55);
-        }
-        if response.hovered() {
-            let (scroll, zoom) = ui.input(|i| (i.smooth_scroll_delta.y, i.zoom_delta()));
-            self.distance = (self.distance * (-scroll * 0.002).exp() / zoom).clamp(0.5, 1e6);
         }
     }
 }
