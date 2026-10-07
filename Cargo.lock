@@ -1219,6 +1219,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "glam"
+version = "0.34.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "fc148d4ddd3930c52f9e5ae79b89805c6f07e9ff417e7b083e0348cea60a5aba"
+
+[[package]]
 name = "glow"
 version = "0.16.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1646,6 +1652,7 @@ version = "0.1.0"
 dependencies = [
  "bytemuck",
  "eframe",
+ "glam",
  "rfd",
  "serde",
  "serde_json",
@@ -2870,10 +2877,10 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "32497e9a4c7b38532efcdebeef879707aa9f794296a4f0244f6f69e9bc8574bd"
 dependencies = [
  "fastrand",
- "getrandom 0.3.4",
+ "getrandom 0.4.3",
  "once_cell",
  "rustix 1.1.5",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -3068,7 +3075,7 @@ checksum = "f2f6fb2847f6742cd76af783a2a2c49e9375d0a111c7bef6f71cd9e738c72d6e"
 dependencies = [
  "memoffset",
  "tempfile",
- "windows-sys 0.60.2",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

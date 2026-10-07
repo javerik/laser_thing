@@ -60,6 +60,42 @@ pub enum DeformKind {
     Sine,
 }
 
+/// How the scan's along-line millimetres are sized on screen.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ScanScale {
+    /// Stretch the scan width over the configured line length.
+    FitLine,
+    /// Fixed pixels per mm; the line length follows the scan width.
+    Fixed,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum RateMode {
+    /// One profile per rendered frame.
+    PerFrame,
+    /// Fixed profile rate, scaled by the simulation speed.
+    PerSecond,
+}
+
+/// How object height turns into line displacement on screen.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum HeightGain {
+    /// Same px/mm as along the line: the line shows the true-scale profile.
+    MatchScale,
+    /// `px/mm · sin(triangulation angle)`, what a camera at that angle would see.
+    FromAngle,
+    /// Fixed px/mm, e.g. calibrated against a real camera.
+    Manual,
+}
+
+/// What happens after the last profile.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum EndMode {
+    Loop,
+    Bounce,
+    Once,
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct LineParams {
@@ -216,6 +252,41 @@ impl Default for NoiseParams {
     }
 }
 
+/// Display and playback of a sliced object scan (the scan itself is not a parameter).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ScanParams {
+    /// Shape the line from the loaded scan instead of the synthetic deformation.
+    pub enabled: bool,
+    pub scale: ScanScale,
+    /// Pixels per mm along the line in `Fixed` mode.
+    pub px_per_mm: f32,
+    pub height_gain: HeightGain,
+    /// Line displacement per mm of height in `Manual` mode.
+    pub height_px_per_mm: f32,
+    /// Higher surfaces move the line down instead of up.
+    pub invert_height: bool,
+    pub rate: RateMode,
+    pub profiles_per_s: f32,
+    pub end: EndMode,
+}
+
+impl Default for ScanParams {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            scale: ScanScale::FitLine,
+            px_per_mm: 5.0,
+            height_gain: HeightGain::MatchScale,
+            height_px_per_mm: 2.5,
+            invert_height: false,
+            rate: RateMode::PerFrame,
+            profiles_per_s: 60.0,
+            end: EndMode::Loop,
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct LaserParams {
@@ -225,6 +296,7 @@ pub struct LaserParams {
     pub motion: MotionParams,
     pub deform: DeformParams,
     pub noise: NoiseParams,
+    pub scan: ScanParams,
     /// Simulation speed multiplier for all time-dependent effects.
     pub time_scale: f32,
 }
@@ -238,6 +310,7 @@ impl Default for LaserParams {
             motion: MotionParams::default(),
             deform: DeformParams::default(),
             noise: NoiseParams::default(),
+            scan: ScanParams::default(),
             time_scale: 1.0,
         }
     }

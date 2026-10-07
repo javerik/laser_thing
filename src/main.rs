@@ -1,8 +1,13 @@
 mod app;
+mod mesh;
+mod mesh_view;
 mod model;
 mod params;
 mod presets;
 mod renderer;
+mod scan;
+mod scan_file;
+mod scan_view;
 mod ui;
 
 use eframe::egui;
@@ -23,6 +28,13 @@ fn main() -> eframe::Result {
     eframe::run_native(
         "Laser Line Emulator",
         options,
-        Box::new(|cc| Ok(Box::new(app::LaserApp::new(cc)?))),
+        Box::new(|cc| {
+            let mut app = app::LaserApp::new(cc)?;
+            // Optional model or scan to open, e.g. from a file manager.
+            if let Some(path) = std::env::args_os().nth(1) {
+                app.open_path(std::path::Path::new(&path));
+            }
+            Ok(Box::new(app))
+        }),
     )
 }

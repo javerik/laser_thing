@@ -50,7 +50,7 @@ impl LaserResources {
         });
         let deform = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("laser deformation"),
-            size: (DEFORM_SAMPLES * size_of::<f32>()) as u64,
+            size: (DEFORM_SAMPLES * size_of::<[f32; 2]>()) as u64,
             usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
@@ -108,10 +108,11 @@ impl LaserResources {
     }
 }
 
-/// Per-frame draw request carrying the uniforms and (optionally) fresh deformation samples.
+/// Per-frame draw request carrying the uniforms and (optionally) fresh deformation
+/// samples as `(displacement px, intensity)`.
 pub struct LaserCallback {
     pub uniforms: Uniforms,
-    pub deform: Option<Vec<f32>>,
+    pub deform: Option<Vec<[f32; 2]>>,
 }
 
 impl egui_wgpu::CallbackTrait for LaserCallback {

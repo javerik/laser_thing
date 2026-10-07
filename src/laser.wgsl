@@ -1,5 +1,5 @@
 // Laser line fragment shader. Every pixel is evaluated analytically:
-// pixel -> line space (along/across) -> deformation -> cross-section profile
+// pixel -> line space (along/across) -> deformation (+ visibility) -> cross-section profile
 // -> end caps -> speckle -> ambient + sensor noise.
 
 struct Uniforms {
@@ -25,7 +25,8 @@ struct Uniforms {
 };
 
 @group(0) @binding(0) var<uniform> u: Uniforms;
-@group(0) @binding(1) var<storage, read> deform: array<f32>;
+// Per sample along the line: (displacement px, intensity 0..1).
+@group(0) @binding(1) var<storage, read> deform: array<vec2f>;
 
 @vertex
 fn vs_main(@builtin(vertex_index) i: u32) -> @builtin(position) vec4f {
@@ -55,9 +56,9 @@ fn value_noise(p: vec2f, s: u32) -> f32 {
     return mix(mix(a, b, w.x), mix(c, d, w.x), w.y);
 }
 
-fn deform_at(x: f32) -> f32 {
+fn deform_at(x: f32) -> vec2f {
     if u.deform_count == 0u {
-        return 0.0;
+        return vec2f(0.0, 1.0);
     }
     let last = f32(u.deform_count - 1u);
     let fi = clamp((x - u.deform_start) / u.deform_step, 0.0, last);
@@ -103,9 +104,10 @@ fn srgb_to_linear(c: vec3f) -> vec3f {
 fn fs_main(@builtin(position) frag: vec4f) -> @location(0) vec4f {
     let p = frag.xy - u.center;
     let along = dot(p, u.dir);
-    let across = dot(p, vec2f(-u.dir.y, u.dir.x)) - deform_at(along);
+    let d = deform_at(along);
+    let across = dot(p, vec2f(-u.dir.y, u.dir.x)) - d.x;
 
-    var laser = u.intensity * profile(across) * end_mask(along);
+    var laser = u.intensity * d.y * profile(across) * end_mask(along);
 
     if u.speckle > 0.0 && laser > 0.0 {
         let n = value_noise(frag.xy / max(u.grain, 0.5), u.seed);

@@ -3,10 +3,12 @@
 use crate::app::{DockState, LaserApp};
 use crate::model;
 use crate::params::{
-    ColorMode, ColorParams, DeformKind, DeformParams, LaserParams, LengthUnit, LineParams,
-    MotionKind, MotionParams, NoiseParams, Orientation, ProfileKind, ProfileParams, SweepMode,
+    ColorMode, ColorParams, DeformKind, DeformParams, EndMode, LaserParams, LengthUnit, LineParams,
+    MotionKind, MotionParams, NoiseParams, Orientation, ProfileKind, ProfileParams, RateMode,
+    HeightGain, ScanParams, ScanScale, SweepMode,
 };
 use crate::presets;
+use crate::scan_view::{profile_plot, scan_summary};
 use eframe::egui::{self, Color32, RichText, Slider, Stroke, Ui};
 use std::time::Duration;
 
@@ -30,8 +32,19 @@ impl LaserApp {
         let offset = self.live.offset_px;
         section(ui, "Movement", true, &mut p.motion, |ui, m| motion_ui(ui, m, offset));
         let t = self.sim_time;
-        section(ui, "Deformation", false, &mut p.deform, |ui, d| deform_ui(ui, d, length_px, t));
+        let scan_drives = self.params.scan.enabled && self.scan.scan.is_some();
+        let p = &mut self.params;
+        section(ui, "Deformation", false, &mut p.deform, |ui, d| {
+            if scan_drives {
+                ui.label(RichText::new("The object scan shapes the line; this deformation is inactive.").weak());
+            }
+            deform_ui(ui, d, length_px, t)
+        });
         section(ui, "Background & noise", false, &mut p.noise, noise_ui);
+
+        egui::CollapsingHeader::new(RichText::new("Object scan").strong())
+            .default_open(true)
+            .show(ui, |ui| self.object_scan_ui(ui));
 
         egui::CollapsingHeader::new(RichText::new("Presets").strong())
             .default_open(true)
@@ -69,8 +82,8 @@ impl LaserApp {
             if ui.add_sized([80.0, 22.0], egui::Button::new(play)).on_hover_text("Space").clicked() {
                 self.playing = !self.playing;
             }
-            if ui.button("⟲ Reset time").on_hover_text("R").clicked() {
-                self.sim_time = 0.0;
+            if ui.button("⟲ Reset time").on_hover_text("R (also rewinds the object scan)").clicked() {
+                self.reset_time();
             }
             ui.label(format!("t = {:.2} s", self.sim_time));
         });
@@ -136,6 +149,61 @@ impl LaserApp {
         }
     }
 
+    fn object_scan_ui(&mut self, ui: &mut Ui) {
+        ui.horizontal_wrapped(|ui| {
+            if ui.button("📂 Import STL…").clicked() {
+                self.import_stl();
+            }
+            let open = self.scan.slicer.open;
+            if ui.selectable_label(open, "🔧 Slicer").on_hover_text("Slice settings and 3D preview").clicked() {
+                self.scan.slicer.open = !open;
+            }
+            if ui.button("Load scan…").clicked() {
+                self.load_scan();
+            }
+            if ui.add_enabled(self.scan.scan.is_some(), egui::Button::new("Save scan…")).clicked() {
+                self.save_scan();
+            }
+        });
+        if self.scan.slicer.is_busy() {
+            ui.add(egui::Spinner::new());
+        }
+        let Some(scan) = self.scan.scan.clone() else {
+            ui.label(RichText::new("No scan loaded. Import an STL model or load a .lscan file.").weak());
+            return;
+        };
+        scan_summary(ui, &scan);
+        ui.checkbox(&mut self.params.scan.enabled, "Drive the line from the scan");
+
+        let row = self.current_row();
+        let live = self.live.scan;
+        let angle = scan.meta.settings.triangulation_deg;
+        scan_params_ui(ui, &mut self.params.scan, live, angle);
+
+        ui.add_space(4.0);
+        let rows = scan.meta.rows;
+        ui.horizontal(|ui| {
+            if ui.small_button("◀").on_hover_text("Previous profile (←)").clicked() {
+                self.step_scan(-1);
+            }
+            if ui.small_button("▶").on_hover_text("Next profile (→)").clicked() {
+                self.step_scan(1);
+            }
+            let mut r = row;
+            if ui.add(Slider::new(&mut r, 0..=rows - 1).text("profile")).changed() {
+                self.scan.pos = r as f64;
+            }
+        });
+        profile_plot(ui, &scan, row, 56.0);
+        ui.horizontal(|ui| {
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if ui.small_button("↺ Reset").on_hover_text("Reset scan display & playback to defaults").clicked() {
+                    self.params.scan = ScanParams::default();
+                }
+            });
+        });
+    }
+
     fn readout_ui(&self, ui: &mut Ui) {
         let l = &self.live;
         egui::Grid::new("readout").num_columns(2).show(ui, |ui| {
@@ -154,7 +222,7 @@ impl LaserApp {
         });
         ui.add_space(4.0);
         ui.label(
-            RichText::new("Keys: F11 fullscreen · Esc exit · D dock/detach · H hide · Space play/pause · R reset time · double-click view = fullscreen")
+            RichText::new("Keys: F11 fullscreen · Esc exit · D dock/detach · H hide · Space play/pause · R reset time · ←/→ step scan profile · double-click view = fullscreen")
                 .small()
                 .weak(),
         );
@@ -162,7 +230,7 @@ impl LaserApp {
 }
 
 /// Collapsible section with a "Reset" button restoring the section defaults.
-fn section<T: Default>(ui: &mut Ui, title: &str, open: bool, value: &mut T, body: impl FnOnce(&mut Ui, &mut T)) {
+pub(crate) fn section<T: Default>(ui: &mut Ui, title: &str, open: bool, value: &mut T, body: impl FnOnce(&mut Ui, &mut T)) {
     egui::CollapsingHeader::new(RichText::new(title).strong())
         .default_open(open)
         .show(ui, |ui| {
@@ -177,11 +245,11 @@ fn section<T: Default>(ui: &mut Ui, title: &str, open: bool, value: &mut T, body
         });
 }
 
-fn grid(ui: &mut Ui, id: &str, body: impl FnOnce(&mut Ui)) {
+pub(crate) fn grid(ui: &mut Ui, id: &str, body: impl FnOnce(&mut Ui)) {
     egui::Grid::new(id).num_columns(2).spacing([10.0, 6.0]).show(ui, body);
 }
 
-fn row(ui: &mut Ui, label: &str, widget: impl FnOnce(&mut Ui)) {
+pub(crate) fn row(ui: &mut Ui, label: &str, widget: impl FnOnce(&mut Ui)) {
     ui.label(label);
     widget(ui);
     ui.end_row();
@@ -406,6 +474,83 @@ fn deform_ui(ui: &mut Ui, d: &mut DeformParams, length_px: f32, t: f64) {
 /// Pixel slider that still accepts typed values outside its range.
 fn px(v: &mut f32, range: std::ops::RangeInclusive<f32>) -> Slider<'_> {
     Slider::new(v, range).suffix(" px").clamping(egui::SliderClamping::Never)
+}
+
+/// Scale, height gain and playback of the scan. `live` is the mapping used in the last frame.
+fn scan_params_ui(ui: &mut Ui, s: &mut ScanParams, live: Option<crate::scan::DisplayMapping>, angle_deg: f32) {
+    grid(ui, "scan_grid", |ui| {
+        row(ui, "Scale", |ui| {
+            ui.horizontal(|ui| {
+                ui.selectable_value(&mut s.scale, ScanScale::FitLine, "Fit line length")
+                    .on_hover_text("Stretch the scan width over the line length set above");
+                ui.selectable_value(&mut s.scale, ScanScale::Fixed, "Fixed");
+            });
+        });
+        if s.scale == ScanScale::Fixed {
+            row(ui, "", |ui| {
+                ui.add(Slider::new(&mut s.px_per_mm, 0.05..=200.0).logarithmic(true).suffix(" px/mm"))
+                    .on_hover_text("Screen pixels per mm along the line; sets the line length");
+            });
+        }
+        row(ui, "Height gain", |ui| {
+            ui.vertical(|ui| {
+                ui.horizontal(|ui| {
+                    ui.selectable_value(&mut s.height_gain, HeightGain::MatchScale, "1:1")
+                        .on_hover_text("Same px/mm as along the line: the line shows the true-scale profile");
+                    ui.selectable_value(&mut s.height_gain, HeightGain::FromAngle, format!("sin {angle_deg:.0}°"))
+                        .on_hover_text("px/mm · sin(triangulation angle of the scan): what a camera at that angle sees");
+                    ui.selectable_value(&mut s.height_gain, HeightGain::Manual, "Manual");
+                });
+                match s.height_gain {
+                    HeightGain::Manual => {
+                        ui.add(Slider::new(&mut s.height_px_per_mm, 0.0..=200.0).logarithmic(true).suffix(" px/mm"))
+                            .on_hover_text("Line displacement per mm of object height");
+                    }
+                    HeightGain::FromAngle if angle_deg < 1.0 => {
+                        ui.colored_label(
+                            ui.visuals().warn_fg_color,
+                            "The scan was sliced at a triangulation angle of 0°, so the height gain is zero and the line stays flat.",
+                        );
+                    }
+                    _ => {}
+                }
+                ui.checkbox(&mut s.invert_height, "Invert (higher = down)");
+            });
+        });
+        if let Some(m) = live {
+            row(ui, "", |ui| {
+                ui.label(
+                    RichText::new(format!(
+                        "{:.3} px/mm ({:.4} mm/px) · height {:.3} px/mm",
+                        m.px_per_mm,
+                        1.0 / m.px_per_mm.max(1e-9),
+                        m.height_px_per_mm
+                    ))
+                    .weak(),
+                );
+            });
+        }
+        row(ui, "Rate", |ui| {
+            ui.horizontal(|ui| {
+                ui.selectable_value(&mut s.rate, RateMode::PerFrame, "1 / frame")
+                    .on_hover_text("One profile per displayed frame, for a camera synchronised to the display");
+                ui.selectable_value(&mut s.rate, RateMode::PerSecond, "Fixed rate");
+            });
+        });
+        if s.rate == RateMode::PerSecond {
+            row(ui, "", |ui| {
+                ui.add(Slider::new(&mut s.profiles_per_s, 0.1..=1000.0).logarithmic(true).suffix(" profiles/s"))
+                    .on_hover_text("Scaled by the simulation speed");
+            });
+        }
+        row(ui, "At end", |ui| {
+            ui.horizontal(|ui| {
+                ui.selectable_value(&mut s.end, EndMode::Loop, "Loop");
+                ui.selectable_value(&mut s.end, EndMode::Bounce, "Bounce");
+                ui.selectable_value(&mut s.end, EndMode::Once, "Once");
+            });
+        });
+    });
 }
 
 fn noise_ui(ui: &mut Ui, n: &mut NoiseParams) {
