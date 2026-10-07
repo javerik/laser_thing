@@ -184,9 +184,11 @@ test('calibration helpers', () => {
   const base = ll.calibrationParams(p);
   assert.equal(base.profile.kind, 'Hard');
   assert.equal(base.motion.kind, 'Static');
-  const line = ll.patternParams(base, { kind: 'line', orientation: 'Vertical', position_pct: 25 });
+  const line = ll.patternParams(base, { kind: 'line', orientation: 'Vertical', position_pct: 25 }, 1000, 500);
   assert.deepEqual(line.line.position_pct, [25, 50]);
-  assert.equal(ll.patternParams(base, { kind: 'blank' }).line.intensity_pct, 0);
+  assert.equal(ll.patternParams(base, { kind: 'blank' }, 1000, 500).line.intensity_pct, 0);
+  const band = ll.patternParams(base, { kind: 'line', orientation: 'Vertical', position_pct: 50, width_pct: 20 }, 1000, 500);
+  assert.equal(band.line.width_px, 200);
 
   const emu = new ll.Emulator(undefined);
   const e = emu.envelope(base, 1000, 500);

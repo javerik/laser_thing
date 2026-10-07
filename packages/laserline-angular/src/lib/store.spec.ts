@@ -347,6 +347,12 @@ describe('LaserlineStore windows', () => {
       expect(drawn.profile.kind).toBe('Hard');
       step();
       expect((await next('shown')).id).toBe(1);
+      send({ type: 'show', to: host, session: 'cal', id: 2, pattern: { kind: 'line', orientation: 'Vertical', position_pct: 50, width_pct: 10 } });
+      await new Promise((r) => setTimeout(r, 20));
+      step();
+      expect((rendered.at(-1) as typeof before).line.width_px).toBe(100);
+      step();
+      expect((await next('shown')).id).toBe(2);
       // Edits during the session wait for its end.
       s.patchParams({ line: { ...before.line, width_px: 9 } });
       step();

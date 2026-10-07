@@ -246,12 +246,14 @@ pub fn calibration_params(#[wasm_bindgen(unchecked_param_type = "LaserParams")] 
     Ok(to_js(&laserline_core::calibration::calibration_params(&from_js(params)?)))
 }
 
-/// `base` (from `calibrationParams`) showing `pattern`: nothing, or a line across the
-/// whole view at a given position.
+/// `base` (from `calibrationParams`) showing `pattern` in a `viewW`×`viewH` px view:
+/// nothing, or a line or band across the whole view at a given position.
 #[wasm_bindgen(js_name = patternParams, unchecked_return_type = "LaserParams")]
 pub fn pattern_params(
     #[wasm_bindgen(unchecked_param_type = "LaserParams")] base: JsValue,
     #[wasm_bindgen(unchecked_param_type = "Pattern")] pattern: JsValue,
+    #[wasm_bindgen(js_name = viewW)] view_w: f32,
+    #[wasm_bindgen(js_name = viewH)] view_h: f32,
 ) -> Result<JsValue, JsError> {
-    Ok(to_js(&laserline_core::calibration::pattern_params(&from_js(base)?, from_js(pattern)?)))
+    Ok(to_js(&laserline_core::calibration::pattern_params(&from_js(base)?, from_js(pattern)?, [view_w, view_h])))
 }

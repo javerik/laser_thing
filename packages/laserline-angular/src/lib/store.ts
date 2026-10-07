@@ -829,14 +829,14 @@ export class LaserlineStore implements OnDestroy {
     const emu = this.emu!;
     this.calibrating.set(true);
     this.calibrationBase = calibrationParams(this.params()) as FullLaserParams;
-    emu.params = patternParams(this.calibrationBase, { kind: 'blank' });
+    emu.params = patternParams(this.calibrationBase, { kind: 'blank' }, 1, 1);
     emu.playing = false;
     this.syncOverlay();
   }
 
   private showPattern(pattern: Pattern, rendered: () => void): void {
     if (!this.calibrationBase) return;
-    this.emu!.params = patternParams(this.calibrationBase, pattern);
+    this.emu!.params = patternParams(this.calibrationBase, pattern, this.viewPx[0], this.viewPx[1]);
     // A view that has not drawn yet still counts down once it does.
     this.pendingPattern = { rendered, frames: PATTERN_FRAMES };
   }
