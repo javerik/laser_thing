@@ -1,4 +1,5 @@
-import type { Envelope, Pattern } from '../wasm/laserline.js';
+import type { Envelope } from '../wasm/laserline.js';
+import type { RemotePattern } from './pattern.js';
 
 /** Default `BroadcastChannel` name of the remote protocol. */
 export const REMOTE_CHANNEL = 'laserline-remote';
@@ -29,7 +30,7 @@ export interface RemoteStatus {
 export type ToLaserline =
   | { v: 1; type: 'hello' }
   | { v: 1; type: 'begin'; to: string; session: string }
-  | { v: 1; type: 'show'; to: string; session: string; id: number; pattern: Pattern }
+  | { v: 1; type: 'show'; to: string; session: string; id: number; pattern: RemotePattern }
   | { v: 1; type: 'end'; to: string; session: string }
   | { v: 1; type: 'camera-field'; to: string; polygon: ViewPoint[] | null; label?: string }
   | { v: 1; type: 'fit-to-field'; to: string; id: number; margin: number };
@@ -48,7 +49,7 @@ export interface RemoteTarget {
   /** Keep the user's parameters aside and stop the simulation for patterns. */
   begin(): void;
   /** Draw `pattern`, then call `rendered` once it has been on screen for a frame. */
-  show(pattern: Pattern, rendered: () => void): void;
+  show(pattern: RemotePattern, rendered: () => void): void;
   /** Put the user's parameters and playback back. */
   end(): void;
   /** Show (or with `null`, remove) the outline of the camera's field. */

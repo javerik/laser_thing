@@ -36,6 +36,11 @@
   the line into it. Core: `laserline_core::calibration` (`line_envelope`,
   `calibration_params`, `pattern_params`, `fit_into`); JS: `Emulator.envelope` /
   `fitInto`, `calibrationParams`, `patternParams`, `DetachedLaserView.setOverlay`.
+  Patterns include bands (`width_pct`), a white view and Gray-code stripes drawn over the view
+  (`OverlayPattern`, `drawOverlayPattern`, `stripeLit`, `DetachedLaserView.setPattern`,
+  `LaserlineStore.overlayPattern`), so a camera seeing only part of the display can be mapped.
+- The default laser colour is white (`ColorParams` defaults to `Custom` 1,1,1); the coloured
+  presets set their wavelength. Calibration lines are white.
 - Every public Rust item and every TypeScript export is documented; `missing_docs` and
   `scripts/check-dts-docs.mjs` (part of `npm test`) enforce it, and the crate READMEs
   are compiled as doctests.

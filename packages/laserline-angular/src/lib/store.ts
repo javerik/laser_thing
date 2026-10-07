@@ -11,8 +11,9 @@ import {
   type LaserView,
   type MeshView,
   type ModelInfo,
-  type Pattern,
+  type OverlayPattern,
   type Preset,
+  type RemotePattern,
   RemoteHost,
   type RemoteStatus,
   Scan,
@@ -27,6 +28,7 @@ import {
   defaultSliceSettings,
   downloadBytes,
   init,
+  isOverlayPattern,
   openPopup,
   patternParams,
   presetFromJson,
@@ -172,6 +174,8 @@ export class LaserlineStore implements OnDestroy {
   readonly cameraFieldLabel = signal<string | undefined>(undefined);
   /** Draw the camera field's outline over the live view. */
   readonly showCameraField = signal(true);
+  /** A calibration pattern drawn over the live view (white, or Gray-code stripes), while one is shown. */
+  readonly overlayPattern = signal<OverlayPattern | undefined>(undefined);
 
   private emu?: Emulator;
   private slicerCore?: Slicer;
@@ -834,9 +838,17 @@ export class LaserlineStore implements OnDestroy {
     this.syncOverlay();
   }
 
-  private showPattern(pattern: Pattern, rendered: () => void): void {
+  private showPattern(pattern: RemotePattern, rendered: () => void): void {
     if (!this.calibrationBase) return;
-    this.emu!.params = patternParams(this.calibrationBase, pattern, this.viewPx[0], this.viewPx[1]);
+    if (isOverlayPattern(pattern)) {
+      // Drawn over a blank laser view.
+      this.emu!.params = patternParams(this.calibrationBase, { kind: 'blank' }, 1, 1);
+      this.overlayPattern.set(pattern);
+    } else {
+      this.emu!.params = patternParams(this.calibrationBase, pattern, this.viewPx[0], this.viewPx[1]);
+      this.overlayPattern.set(undefined);
+    }
+    this.detached?.setPattern(this.overlayPattern());
     // A view that has not drawn yet still counts down once it does.
     this.pendingPattern = { rendered, frames: PATTERN_FRAMES };
   }
@@ -845,6 +857,8 @@ export class LaserlineStore implements OnDestroy {
     this.pendingPattern = undefined;
     this.calibrationBase = undefined;
     this.calibrating.set(false);
+    this.overlayPattern.set(undefined);
+    this.detached?.setPattern(undefined);
     this.emu!.params = this.params();
     this.emu!.playing = this.playing();
     this.syncOverlay();

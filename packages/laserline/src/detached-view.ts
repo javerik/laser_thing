@@ -1,4 +1,5 @@
 import { type Emulator, LaserView, type LiveInfo } from '../wasm/laserline.js';
+import { type OverlayPattern, drawOverlayPattern } from './pattern.js';
 import { CanvasBridge, openPopup } from './popup.js';
 
 /** Options of {@link DetachedLaserView.open}. */
@@ -56,6 +57,7 @@ export class DetachedLaserView {
   private closed = false;
   private readonly bridge: CanvasBridge;
   private overlay?: SVGSVGElement;
+  private patternCanvas?: HTMLCanvasElement;
 
   private constructor(
     private readonly win: Window,
@@ -199,6 +201,30 @@ export class DetachedLaserView {
     }
     doc.body.append(svg);
     this.overlay = svg;
+  }
+
+  /**
+   * Covers the view with a calibration pattern (see `drawOverlayPattern`), drawn at the view's
+   * pixel size; `undefined` removes it.
+   */
+  setPattern(pattern: OverlayPattern | undefined): void {
+    if (this.closed || this.win.closed) return;
+    if (!pattern) {
+      this.patternCanvas?.remove();
+      this.patternCanvas = undefined;
+      return;
+    }
+    if (!this.patternCanvas) {
+      const c = this.win.document.createElement('canvas');
+      c.style.cssText = 'position:fixed;inset:0;width:100vw;height:100vh;pointer-events:none';
+      this.win.document.body.append(c);
+      this.patternCanvas = c;
+    }
+    const [w, h] = this.measure();
+    const c = this.patternCanvas;
+    if (c.width !== w || c.height !== h) [c.width, c.height] = [w, h];
+    const ctx = c.getContext('2d');
+    if (ctx) drawOverlayPattern(ctx, pattern, w, h);
   }
 
   /** Releases the GPU resources and closes the window. Safe to call repeatedly. */

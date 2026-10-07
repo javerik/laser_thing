@@ -12,7 +12,7 @@ import {
   signal,
   viewChild,
 } from '@angular/core';
-import { CanvasBridge, LaserView, MeshView, type Scan, type ViewLabel } from '@javerik/laserline';
+import { CanvasBridge, LaserView, MeshView, drawOverlayPattern, type Scan, type ViewLabel } from '@javerik/laserline';
 import { LASERLINE_CONFIG } from './config';
 import { LaserlineStore } from './store';
 import { THEME } from './widgets';
@@ -92,6 +92,7 @@ function bindView<V extends { free(): void; resize(w: number, h: number): void }
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
     <canvas #canvas (dblclick)="activate.emit()"></canvas>
+    <canvas #pattern class="pattern" [hidden]="!store.overlayPattern()"></canvas>
     @if (field(); as f) {
       <svg class="field" [attr.viewBox]="f.viewBox" preserveAspectRatio="none" aria-hidden="true">
         <polygon [attr.points]="f.points" />
@@ -111,6 +112,8 @@ function bindView<V extends { free(): void; resize(w: number, h: number): void }
       canvas { display: block; width: 100%; height: 100%; }
       .message { position: absolute; left: 0; right: 0; bottom: 24px; text-align: center; }
       .field { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
+      .pattern { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
+      .pattern[hidden] { display: none; }
       .field polygon { fill: none; stroke: var(--_warn); stroke-width: 1.5; stroke-dasharray: 6 4; vector-effect: non-scaling-stroke; }
       .field text { fill: var(--_warn); font-size: 12px; }
     `,
@@ -121,7 +124,8 @@ export class LlLaserCanvas {
   /** Double click, e.g. to toggle fullscreen. */
   readonly activate = output<void>();
   protected readonly error = signal<string | undefined>(undefined);
-  private readonly store = inject(LaserlineStore);
+  protected readonly store = inject(LaserlineStore);
+  private readonly patternCanvas = viewChild.required<ElementRef<HTMLCanvasElement>>('pattern');
   /** The camera field's outline, in the drawing buffer's pixels; hidden while calibrating. */
   protected readonly field = computed(() => {
     const polygon = this.store.cameraField();
@@ -139,6 +143,18 @@ export class LlLaserCanvas {
   constructor() {
     const store = this.store;
     const backend = inject(LASERLINE_CONFIG).backend ?? 'auto';
+    // A calibration pattern, drawn at the laser canvas' pixel size so view px match.
+    afterRenderEffect({
+      write: () => {
+        const pattern = store.overlayPattern();
+        const [w, h] = store.live().view_px;
+        if (!pattern || w <= 0 || h <= 0) return;
+        const c = this.patternCanvas().nativeElement;
+        if (c.width !== w || c.height !== h) [c.width, c.height] = [w, h];
+        const ctx = c.getContext('2d');
+        if (ctx) drawOverlayPattern(ctx, pattern, w, h);
+      },
+    });
     bindView(
       () => this.canvas().nativeElement,
       (el) => (el instanceof OffscreenCanvas ? LaserView.createOffscreen(el, backend) : LaserView.create(el, backend)),

@@ -23,6 +23,14 @@ export type { FromWorker, ToWorker } from './protocol.js';
 export { SliceRunner } from './slice-runner.js';
 export { type Action, type Shortcut, SHORTCUTS, actionForKey, shortcutHelp } from './keys.js';
 export {
+  type OverlayPattern,
+  type RemotePattern,
+  drawOverlayPattern,
+  grayCode,
+  isOverlayPattern,
+  stripeLit,
+} from './pattern.js';
+export {
   REMOTE_CHANNEL,
   REMOTE_IDLE_MS,
   REMOTE_VERSION,

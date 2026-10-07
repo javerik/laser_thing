@@ -202,9 +202,10 @@ pub struct ColorParams {
 }
 
 impl Default for ColorParams {
+    /// White: brightest on any display, and seen through a camera's laser filter too.
     fn default() -> Self {
         Self {
-            mode: ColorMode::Wavelength,
+            mode: ColorMode::Custom,
             wavelength_nm: 660.0,
             custom_rgb: [1.0, 1.0, 1.0],
         }

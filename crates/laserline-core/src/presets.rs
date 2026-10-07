@@ -7,21 +7,24 @@ use crate::params::{
 /// The built-in presets as `(name, parameters)`, in display order.
 pub fn builtin() -> Vec<(&'static str, LaserParams)> {
     let base = LaserParams::default();
+    // The coloured presets name their laser; the default colour is white.
+    let mut red = base.clone();
+    red.color.mode = ColorMode::Wavelength;
 
-    let mut sweep = base.clone();
+    let mut sweep = red.clone();
     sweep.motion.kind = MotionKind::Sweep;
     sweep.motion.sweep_mode = SweepMode::Wrap;
     sweep.motion.speed_px_s = 300.0;
     sweep.line.length = 100.0;
 
-    let mut vertical_sine = base.clone();
+    let mut vertical_sine = red.clone();
     vertical_sine.line.orientation = Orientation::Vertical;
     vertical_sine.color.wavelength_nm = 520.0;
     vertical_sine.motion.kind = MotionKind::Sine;
     vertical_sine.motion.amplitude_px = 200.0;
     vertical_sine.motion.frequency_hz = 0.5;
 
-    let mut step = base.clone();
+    let mut step = red.clone();
     step.deform.kind = DeformKind::Box;
     step.deform.height_px = -80.0;
     step.deform.width_px = 300.0;
@@ -30,7 +33,7 @@ pub fn builtin() -> Vec<(&'static str, LaserParams)> {
     step.line.length = 100.0;
     step.profile.end_softness_px = 0.0;
 
-    let mut realistic = base.clone();
+    let mut realistic = red.clone();
     realistic.color.wavelength_nm = 405.0;
     realistic.line.intensity_pct = 85.0;
     realistic.line.width_px = 4.0;
@@ -43,6 +46,7 @@ pub fn builtin() -> Vec<(&'static str, LaserParams)> {
     realistic.deform.wavelength_px = 400.0;
 
     let mut hard = base.clone();
+    hard.color.custom_rgb = [1.0, 1.0, 1.0];
     hard.profile.kind = ProfileKind::Hard;
     hard.profile.end_softness_px = 0.0;
     hard.line.width_px = 1.0;
@@ -51,7 +55,7 @@ pub fn builtin() -> Vec<(&'static str, LaserParams)> {
     hard.color.mode = ColorMode::Custom;
 
     vec![
-        ("Static red Gaussian", base),
+        ("Static red Gaussian", red),
         ("Sweep scan", sweep),
         ("Vertical green oscillation", vertical_sine),
         ("Object passing (box)", step),

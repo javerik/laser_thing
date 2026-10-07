@@ -11,8 +11,8 @@
 
 use crate::model;
 use crate::params::{
-    DeformKind, DeformParams, LaserParams, LengthUnit, MotionKind, MotionParams, Orientation,
-    ProfileKind, ScanScale,
+    ColorMode, DeformKind, DeformParams, LaserParams, LengthUnit, MotionKind, MotionParams,
+    Orientation, ProfileKind, ScanScale,
 };
 use crate::scan::{self, Scan};
 use serde::{Deserialize, Serialize};
@@ -145,9 +145,9 @@ pub enum Pattern {
 }
 
 /// `params` turned into a clean calibration line: static, undeformed, no scan or noise,
-/// a hard profile without end caps at full intensity and at least
-/// [`MIN_CALIBRATION_WIDTH_PX`] wide. The colour is kept, since the camera may only see
-/// the user's laser colour through its filter.
+/// a hard profile without end caps, white at full intensity and at least
+/// [`MIN_CALIBRATION_WIDTH_PX`] wide. White is the brightest a display shows, and holds
+/// every laser colour a camera's filter may pass.
 pub fn calibration_params(params: &LaserParams) -> LaserParams {
     let mut p = params.clone();
     p.line.intensity_pct = 100.0;
@@ -161,6 +161,8 @@ pub fn calibration_params(params: &LaserParams) -> LaserParams {
     p.noise.ambient_pct = 0.0;
     p.noise.speckle_pct = 0.0;
     p.noise.noise_pct = 0.0;
+    p.color.mode = ColorMode::Custom;
+    p.color.custom_rgb = [1.0, 1.0, 1.0];
     p
 }
 
@@ -402,7 +404,7 @@ mod tests {
     }
 
     #[test]
-    fn calibration_line_is_clean_and_keeps_the_colour() {
+    fn calibration_line_is_clean_and_white() {
         let mut p = LaserParams::default();
         p.line.width_px = 1.0;
         p.line.intensity_pct = 30.0;
@@ -417,7 +419,7 @@ mod tests {
         assert_eq!(c.profile.end_softness_px, 0.0);
         assert_eq!((c.motion.kind, c.deform.kind, c.scan.enabled), (MotionKind::Static, DeformKind::None, false));
         assert_eq!(c.noise.noise_pct, 0.0);
-        assert_eq!(c.color, p.color);
+        assert_eq!((c.color.mode, c.color.custom_rgb), (ColorMode::Custom, [1.0, 1.0, 1.0]));
     }
 
     #[test]

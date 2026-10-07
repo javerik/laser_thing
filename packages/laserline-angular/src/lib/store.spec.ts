@@ -353,12 +353,20 @@ describe('LaserlineStore windows', () => {
       expect((rendered.at(-1) as typeof before).line.width_px).toBe(100);
       step();
       expect((await next('shown')).id).toBe(2);
+      // Overlay patterns: drawn over a blank laser view, gone when the session ends.
+      send({ type: 'show', to: host, session: 'cal', id: 3, pattern: { kind: 'stripes', orientation: 'Vertical', bit: 4 } });
+      await until(() => s.overlayPattern()?.kind === 'stripes');
+      step();
+      expect((rendered.at(-1) as typeof before).line.intensity_pct).toBe(0);
+      step();
+      expect((await next('shown')).id).toBe(3);
       // Edits during the session wait for its end.
       s.patchParams({ line: { ...before.line, width_px: 9 } });
       step();
-      expect((rendered.at(-1) as typeof before).line.orientation).toBe('Vertical');
+      expect((rendered.at(-1) as typeof before).line.width_px).not.toBe(9);
       send({ type: 'end', to: host, session: 'cal' });
       await until(() => !s.calibrating());
+      expect(s.overlayPattern()).toBeUndefined();
       step();
       expect((rendered.at(-1) as typeof before).line.width_px).toBe(9);
       expect(s.playing()).toBe(true);
