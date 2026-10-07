@@ -1,0 +1,25 @@
+{
+  "name": "@javerik/laserline-angular",
+  "version": "0.1.0",
+  "description": "Angular components for the laserline emulator: live laser view, controls and STL slicer with 3D preview",
+  "license": "MIT OR Apache-2.0",
+  "author": "Jonas Ahlf <javerik@javerik.space>",
+  "repository": {
+    "type": "git",
+    "url": "https://git.javerik.dev/opensource/laserthing",
+    "directory": "packages/laserline-angular"
+  },
+  "keywords": ["angular", "laser", "triangulation", "emulator", "stl", "webgl", "webgpu"],
+  "peerDependencies": {
+    "@angular/common": "^21.2.0",
+    "@angular/core": "^21.2.0"
+  },
+  "dependencies": {
+    "@javerik/laserline": "^0.1.0",
+    "tslib": "^2.3.0"
+  },
+  "sideEffects": false,
+  "publishConfig": {
+    "access": "public"
+  }
+}

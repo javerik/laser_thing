@@ -1,0 +1,112 @@
+{
+  "$schema": "./node_modules/@angular/cli/lib/config/schema.json",
+  "version": 1,
+  "cli": {
+    "packageManager": "npm",
+    "analytics": false
+  },
+  "newProjectRoot": "packages",
+  "projects": {
+    "laserline-angular": {
+      "projectType": "library",
+      "root": "packages/laserline-angular",
+      "sourceRoot": "packages/laserline-angular/src",
+      "prefix": "ll",
+      "architect": {
+        "build": {
+          "builder": "@angular/build:ng-packagr",
+          "options": {
+            "project": "packages/laserline-angular/ng-package.json"
+          },
+          "configurations": {
+            "production": {
+              "tsConfig": "packages/laserline-angular/tsconfig.lib.prod.json"
+            },
+            "development": {
+              "tsConfig": "packages/laserline-angular/tsconfig.lib.json"
+            }
+          },
+          "defaultConfiguration": "production"
+        },
+        "test": {
+          "builder": "@angular/build:unit-test",
+          "options": {
+            "tsConfig": "packages/laserline-angular/tsconfig.spec.json"
+          }
+        }
+      }
+    },
+    "laserline-web": {
+      "projectType": "application",
+      "root": "apps/laserline-web",
+      "sourceRoot": "apps/laserline-web/src",
+      "prefix": "app",
+      "architect": {
+        "build": {
+          "builder": "@angular/build:application",
+          "options": {
+            "browser": "apps/laserline-web/src/main.ts",
+            "tsConfig": "apps/laserline-web/tsconfig.app.json",
+            "webWorkerTsConfig": "apps/laserline-web/tsconfig.worker.json",
+            "outputPath": "apps/laserline-web/dist",
+            "assets": [
+              {
+                "glob": "**/*",
+                "input": "apps/laserline-web/public"
+              },
+              {
+                "glob": "laserline_bg.wasm",
+                "input": "packages/laserline/wasm",
+                "output": "laserline"
+              }
+            ],
+            "styles": [
+              "apps/laserline-web/src/styles.css"
+            ]
+          },
+          "configurations": {
+            "production": {
+              "budgets": [
+                {
+                  "type": "initial",
+                  "maximumWarning": "500kB",
+                  "maximumError": "1MB"
+                },
+                {
+                  "type": "anyComponentStyle",
+                  "maximumWarning": "4kB",
+                  "maximumError": "8kB"
+                }
+              ],
+              "outputHashing": "all"
+            },
+            "development": {
+              "optimization": false,
+              "extractLicenses": false,
+              "sourceMap": true
+            }
+          },
+          "defaultConfiguration": "production"
+        },
+        "serve": {
+          "builder": "@angular/build:dev-server",
+          "configurations": {
+            "production": {
+              "buildTarget": "laserline-web:build:production"
+            },
+            "development": {
+              "buildTarget": "laserline-web:build:development"
+            }
+          },
+          "defaultConfiguration": "development"
+        },
+        "test": {
+          "builder": "@angular/build:unit-test",
+          "options": {
+            "tsConfig": "apps/laserline-web/tsconfig.spec.json"
+          }
+        }
+      }
+    }
+  }
+}

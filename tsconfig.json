@@ -1,0 +1,33 @@
+/* Shared by the Angular projects (library and demo app). */
+{
+  "compileOnSave": false,
+  "compilerOptions": {
+    "strict": true,
+    "noImplicitOverride": true,
+    "noPropertyAccessFromIndexSignature": true,
+    "paths": {
+      "@javerik/laserline-angular": ["./packages/laserline-angular/dist"]
+    },
+    "noImplicitReturns": true,
+    "noFallthroughCasesInSwitch": true,
+    "skipLibCheck": true,
+    "isolatedModules": true,
+    "experimentalDecorators": true,
+    "importHelpers": true,
+    "target": "ES2022",
+    "module": "preserve"
+  },
+  "angularCompilerOptions": {
+    "enableI18nLegacyMessageIdFormat": false,
+    "strictInjectionParameters": true,
+    "strictInputAccessModifiers": true,
+    "strictTemplates": true
+  },
+  "files": [],
+  "references": [
+    { "path": "./packages/laserline-angular/tsconfig.lib.json" },
+    { "path": "./packages/laserline-angular/tsconfig.spec.json" },
+    { "path": "./apps/laserline-web/tsconfig.app.json" },
+    { "path": "./apps/laserline-web/tsconfig.spec.json" }
+  ]
+}
