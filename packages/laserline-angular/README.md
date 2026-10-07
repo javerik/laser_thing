@@ -37,8 +37,30 @@ panel and the STL slicer with 3D preview, built on
    @if (store.slicerOpen()) { <ll-slicer /> }
    ```
 
-Smaller pieces (`ll-line-controls`, `ll-mesh-view`, `ll-range-image`, `ll-slider`, …)
-and the `LaserlineStore` are exported for custom layouts.
+`<ll-laser-view>` can be detached into a window of its own (its hover button, or
+`store.detachView()` / `store.toggleViewDetached()` from a click or key handler) and
+docked back (`store.dockView()`, the window's Dock button, or closing the window);
+it shows a placeholder meanwhile. Key presses in that window reach the page's
+`document` keydown handlers, and `store.toggleFullscreen()` / `store.fullscreen()`
+follow whichever window shows the view.
+
+The slicer can open in a window of its own too: `store.detachSlicer()` (from a user
+action) opens the window, and `<ll-window-portal>` renders any template into it with
+the page's styles. Closing that window closes the slicer, and `store.dockSlicer()` puts
+the slicer back into the page:
+
+```html
+@if (store.slicerWindow(); as win) {
+  <ll-window-portal [window]="win"><ng-template><ll-slicer /></ng-template></ll-window-portal>
+} @else if (store.slicerOpen()) {
+  <ll-slicer />
+}
+```
+
+Laserline views inside such windows render through an `OffscreenCanvas` automatically.
+
+Smaller pieces (`ll-laser-canvas`, `ll-line-controls`, `ll-mesh-view`, `ll-range-image`,
+`ll-slider`, …) and the `LaserlineStore` are exported for custom layouts.
 
 ## Theming
 

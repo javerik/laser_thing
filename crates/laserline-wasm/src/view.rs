@@ -1,4 +1,5 @@
-//! Renderers bound to a `<canvas>`: WebGPU where available, WebGL2 otherwise.
+//! Renderers bound to a `<canvas>` (or an `OffscreenCanvas`): WebGPU where available,
+//! WebGL2 otherwise.
 
 use crate::js_err;
 use crate::state::{Emulator, Slicer};
@@ -6,7 +7,7 @@ use crate::to_js;
 use laserline_render::{LaserRenderer, MeshViewInput, MeshViewRenderer};
 use serde::Serialize;
 use wasm_bindgen::prelude::*;
-use web_sys::HtmlCanvasElement;
+use web_sys::{HtmlCanvasElement, OffscreenCanvas};
 
 /// Background of the 3D view where there is nothing to show (matches its clear colour).
 const EMPTY_3D: wgpu::Color = wgpu::Color { r: 0.07, g: 0.075, b: 0.085, a: 1.0 };
@@ -21,17 +22,22 @@ struct Target {
 }
 
 impl Target {
-    /// `backend`: "webgpu", "webgl" or anything else for automatic choice.
-    async fn new(canvas: HtmlCanvasElement, backend: Option<String>) -> Result<Self, JsError> {
+    /// `backend`: "webgpu", "webgl" or anything else for automatic choice. `size` is the
+    /// canvas' drawing buffer size.
+    async fn new(
+        canvas: wgpu::SurfaceTarget<'static>,
+        (width, height): (u32, u32),
+        backend: Option<String>,
+    ) -> Result<Self, JsError> {
         let backends = match backend.as_deref() {
             Some("webgpu") => wgpu::Backends::BROWSER_WEBGPU,
             Some("webgl") => wgpu::Backends::GL,
             _ => wgpu::Backends::BROWSER_WEBGPU | wgpu::Backends::GL,
         };
-        let (width, height) = (canvas.width().max(1), canvas.height().max(1));
+        let (width, height) = (width.max(1), height.max(1));
         let desc = wgpu::InstanceDescriptor { backends, ..Default::default() };
         let instance = wgpu::util::new_instance_with_webgpu_detection(&desc).await;
-        let surface = instance.create_surface(wgpu::SurfaceTarget::Canvas(canvas)).map_err(js_err)?;
+        let surface = instance.create_surface(canvas).map_err(js_err)?;
         let adapter = instance
             .request_adapter(&wgpu::RequestAdapterOptions { compatible_surface: Some(&surface), ..Default::default() })
             .await
@@ -122,9 +128,21 @@ pub struct LaserView {
 impl LaserView {
     /// Binds to `canvas`. `backend`: `"webgpu"`, `"webgl"` or omitted for automatic.
     pub async fn create(canvas: HtmlCanvasElement, backend: Option<String>) -> Result<LaserView, JsError> {
-        let target = Target::new(canvas, backend).await?;
+        let size = (canvas.width(), canvas.height());
+        Ok(Self::with_target(Target::new(wgpu::SurfaceTarget::Canvas(canvas), size, backend).await?))
+    }
+
+    /// Binds to an `OffscreenCanvas` created in this window, e.g. to show the frames in
+    /// another window via `transferToImageBitmap()`. `backend` as for `create`.
+    #[wasm_bindgen(js_name = createOffscreen)]
+    pub async fn create_offscreen(canvas: OffscreenCanvas, backend: Option<String>) -> Result<LaserView, JsError> {
+        let size = (canvas.width(), canvas.height());
+        Ok(Self::with_target(Target::new(wgpu::SurfaceTarget::OffscreenCanvas(canvas), size, backend).await?))
+    }
+
+    fn with_target(target: Target) -> LaserView {
         let renderer = LaserRenderer::new(&target.device, target.config.format);
-        Ok(LaserView { target, renderer })
+        LaserView { target, renderer }
     }
 
     /// `"WebGPU"` or `"WebGL2"`.
@@ -169,10 +187,22 @@ pub struct MeshView {
 impl MeshView {
     /// Binds to `canvas`. `backend`: `"webgpu"`, `"webgl"` or omitted for automatic.
     pub async fn create(canvas: HtmlCanvasElement, backend: Option<String>) -> Result<MeshView, JsError> {
-        let target = Target::new(canvas, backend).await?;
+        let size = (canvas.width(), canvas.height());
+        Ok(Self::with_target(Target::new(wgpu::SurfaceTarget::Canvas(canvas), size, backend).await?))
+    }
+
+    /// Binds to an `OffscreenCanvas` created in this window, e.g. to show the frames in
+    /// another window via `transferToImageBitmap()`. `backend` as for `create`.
+    #[wasm_bindgen(js_name = createOffscreen)]
+    pub async fn create_offscreen(canvas: OffscreenCanvas, backend: Option<String>) -> Result<MeshView, JsError> {
+        let size = (canvas.width(), canvas.height());
+        Ok(Self::with_target(Target::new(wgpu::SurfaceTarget::OffscreenCanvas(canvas), size, backend).await?))
+    }
+
+    fn with_target(target: Target) -> MeshView {
         let samples = MeshViewRenderer::supported_samples(&target.adapter);
         let renderer = MeshViewRenderer::new(&target.device, target.config.format, samples);
-        Ok(MeshView { target, renderer })
+        MeshView { target, renderer }
     }
 
     #[wasm_bindgen(getter)]

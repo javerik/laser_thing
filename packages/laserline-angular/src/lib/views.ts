@@ -12,15 +12,21 @@ import {
   signal,
   viewChild,
 } from '@angular/core';
-import { LaserView, MeshView, type Scan, type ViewLabel } from '@javerik/laserline';
+import { CanvasBridge, LaserView, MeshView, type Scan, type ViewLabel } from '@javerik/laserline';
 import { LASERLINE_CONFIG } from './config';
 import { LaserlineStore } from './store';
 import { THEME } from './widgets';
 
+/** The window showing `el` (this one, or a popup the element was moved into). */
+function windowOf(el: Element): Window & typeof globalThis {
+  return (el.ownerDocument.defaultView ?? window) as Window & typeof globalThis;
+}
+
 /** Keeps a canvas' drawing buffer at its CSS size × device pixel ratio. */
 function trackSize(canvas: HTMLCanvasElement, resize: (w: number, h: number) => void): () => void {
+  const win = windowOf(canvas);
   const apply = () => {
-    const dpr = window.devicePixelRatio || 1;
+    const dpr = win.devicePixelRatio || 1;
     const w = Math.max(1, Math.round(canvas.clientWidth * dpr));
     const h = Math.max(1, Math.round(canvas.clientHeight * dpr));
     if (canvas.width !== w || canvas.height !== h) {
@@ -30,19 +36,23 @@ function trackSize(canvas: HTMLCanvasElement, resize: (w: number, h: number) => 
     resize(w, h);
   };
   apply();
-  const observer = new ResizeObserver(apply);
+  const observer = new win.ResizeObserver(apply);
   observer.observe(canvas);
   return () => observer.disconnect();
 }
 
 /**
  * Binds a GPU view to the component's canvas once the store is loaded, and releases it
- * when the component is destroyed. `attach` returns the cleanups.
+ * when the component is destroyed. `attach` returns the cleanups; it gets a function
+ * to call after each render.
+ *
+ * In another window (a popup the component was moved into) the view renders into an
+ * `OffscreenCanvas` of this window, and `afterRender` shows the frame on the canvas.
  */
 function bindView<V extends { free(): void; resize(w: number, h: number): void }>(
   canvas: () => HTMLCanvasElement,
-  create: (canvas: HTMLCanvasElement) => Promise<V>,
-  attach: (view: V) => (() => void)[],
+  create: (canvas: HTMLCanvasElement | OffscreenCanvas) => Promise<V>,
+  attach: (view: V, afterRender?: () => void) => (() => void)[],
   onError: (message: string) => void,
 ): void {
   const store = inject(LaserlineStore);
@@ -54,23 +64,31 @@ function bindView<V extends { free(): void; resize(w: number, h: number): void }
   });
   afterNextRender(async () => {
     const el = canvas();
-    const dpr = window.devicePixelRatio || 1;
+    const dpr = windowOf(el).devicePixelRatio || 1;
     el.width = Math.max(1, Math.round(el.clientWidth * dpr));
     el.height = Math.max(1, Math.round(el.clientHeight * dpr));
     try {
       await store.loaded;
-      const view = await create(el);
+      const bridge = el.ownerDocument === document ? undefined : new CanvasBridge(el);
+      const view = await create(bridge?.offscreen ?? el);
       if (destroyed) return view.free();
-      cleanup = [trackSize(el, (w, h) => view.resize(w, h)), ...attach(view), () => view.free()];
+      cleanup = [
+        trackSize(el, (w, h) => view.resize(w, h)),
+        ...attach(view, bridge && (() => bridge.present())),
+        () => view.free(),
+      ];
     } catch (e) {
       onError(`No WebGPU or WebGL2 available: ${e instanceof Error ? e.message : String(e)}`);
     }
   });
 }
 
-/** The live laser line, filling the element. */
+/**
+ * The live laser line, filling the element, on a canvas of this page. Prefer
+ * `<ll-laser-view>`, which can also move the view into a window of its own.
+ */
 @Component({
-  selector: 'll-laser-view',
+  selector: 'll-laser-canvas',
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
     <canvas #canvas (dblclick)="activate.emit()"></canvas>
@@ -87,7 +105,7 @@ function bindView<V extends { free(): void; resize(w: number, h: number): void }
     `,
   ],
 })
-export class LlLaserView {
+export class LlLaserCanvas {
   private readonly canvas = viewChild.required<ElementRef<HTMLCanvasElement>>('canvas');
   /** Double click, e.g. to toggle fullscreen. */
   readonly activate = output<void>();
@@ -98,11 +116,54 @@ export class LlLaserView {
     const backend = inject(LASERLINE_CONFIG).backend ?? 'auto';
     bindView(
       () => this.canvas().nativeElement,
-      (el) => LaserView.create(el, backend),
-      (view) => [store.attachLaserView(view)],
+      (el) => (el instanceof OffscreenCanvas ? LaserView.createOffscreen(el, backend) : LaserView.create(el, backend)),
+      (view, afterRender) => [store.attachLaserView(view, afterRender)],
       (e) => this.error.set(e),
     );
   }
+}
+
+/**
+ * The live laser line, filling the element. It can be detached into a window of its own
+ * (hover button, or `LaserlineStore.detachView()`) and docked back; while detached the
+ * element shows a placeholder.
+ */
+@Component({
+  selector: 'll-laser-view',
+  imports: [LlLaserCanvas],
+  changeDetection: ChangeDetectionStrategy.OnPush,
+  template: `
+    @if (store.viewDetached()) {
+      <div class="detached">
+        <span>The live view is in its own window.</span>
+        <button type="button" (click)="store.dockView()">Dock here</button>
+      </div>
+    } @else {
+      <ll-laser-canvas (activate)="activate.emit()" />
+      @if (detachable()) {
+        <button type="button" class="detach" title="Show the live view in a window of its own" (click)="store.detachView()">
+          ⧉ Detach
+        </button>
+      }
+    }
+  `,
+  styles: [
+    THEME,
+    `
+      :host { display: block; position: relative; background: #000; overflow: hidden; }
+      ll-laser-canvas { position: absolute; inset: 0; }
+      .detach { position: absolute; top: 8px; right: 8px; opacity: 0; transition: opacity 0.2s; }
+      :host(:hover) .detach, .detach:focus-visible { opacity: 1; }
+      .detached { position: absolute; inset: 0; display: grid; place-content: center; justify-items: center; gap: 10px; color: var(--_weak); background: var(--_bg); }
+    `,
+  ],
+})
+export class LlLaserView {
+  protected readonly store = inject(LaserlineStore);
+  /** Show the hover button that detaches the view (the store's methods work regardless). */
+  readonly detachable = input(true);
+  /** Double click, e.g. to toggle fullscreen (`LaserlineStore.toggleFullscreen()`). */
+  readonly activate = output<void>();
 }
 
 /** The slicer's 3D view: drag to orbit, right/shift-drag to pan, wheel to zoom, double-click to reset. */
@@ -153,11 +214,15 @@ export class LlMeshView {
     const backend = inject(LASERLINE_CONFIG).backend ?? 'auto';
     bindView(
       () => this.canvas().nativeElement,
-      (el) => MeshView.create(el, backend),
-      (view) => [
-        this.store.attachMeshView(view, (labels) => {
-          if (JSON.stringify(labels) !== JSON.stringify(this.labels())) this.labels.set(labels);
-        }),
+      (el) => (el instanceof OffscreenCanvas ? MeshView.createOffscreen(el, backend) : MeshView.create(el, backend)),
+      (view, afterRender) => [
+        this.store.attachMeshView(
+          view,
+          (labels) => {
+            if (JSON.stringify(labels) !== JSON.stringify(this.labels())) this.labels.set(labels);
+          },
+          afterRender,
+        ),
       ],
       (e) => this.error.set(e),
     );

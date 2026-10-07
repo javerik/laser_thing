@@ -1,5 +1,5 @@
 import { TestBed } from '@angular/core/testing';
-import { init, profileCurve } from '@javerik/laserline';
+import { DetachedLaserView, type DetachedViewOptions, init, profileCurve } from '@javerik/laserline';
 import { readFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { LASERLINE_CONFIG } from './config';
@@ -87,6 +87,156 @@ describe('plot helpers', () => {
     curve.forEach((v, i) => {
       const x = -width + i * 0.5;
       expect(v).toBeCloseTo(Math.exp(-0.5 * (x / sigma) ** 2), 5);
+    });
+  });
+});
+
+describe('LaserlineStore windows', () => {
+  beforeEach(() => vi.stubGlobal('localStorage', memoryStorage()));
+  afterEach(() => vi.unstubAllGlobals());
+
+  describe('detached live view', () => {
+    /** Stands in for the popup: records the options and calls. */
+    function fakeWindow(ready: Promise<void> = Promise.resolve()) {
+      let options!: DetachedViewOptions;
+      const view = {
+        ready,
+        visible: true,
+        fullscreen: false,
+        backend: 'WebGL2',
+        window: {
+          closed: false,
+          document: { visibilityState: 'visible' },
+          requestAnimationFrame: vi.fn(() => 1),
+          cancelAnimationFrame: vi.fn(),
+        },
+        render: vi.fn(),
+        close: vi.fn(),
+        toggleFullscreen: vi.fn(),
+      };
+      vi.spyOn(DetachedLaserView, 'open').mockImplementation((o) => {
+        options = o;
+        return view as unknown as DetachedLaserView;
+      });
+      return { view, options: () => options };
+    }
+
+    afterEach(() => vi.restoreAllMocks());
+
+    it('detaches and docks the view', async () => {
+      const s = await store();
+      const { view } = fakeWindow();
+      s.toggleViewDetached();
+      expect(s.viewDetached()).toBe(true);
+      s.toggleFullscreen();
+      expect(view.toggleFullscreen).toHaveBeenCalled();
+      s.toggleViewDetached();
+      expect(s.viewDetached()).toBe(false);
+      expect(view.close).toHaveBeenCalled();
+    });
+
+    it('docks the view when its window is closed', async () => {
+      const s = await store();
+      const { options } = fakeWindow();
+      s.detachView();
+      options().onClose();
+      expect(s.viewDetached()).toBe(false);
+    });
+
+    it('stays docked when the pop-up is blocked', async () => {
+      const s = await store();
+      vi.spyOn(DetachedLaserView, 'open').mockReturnValue(undefined);
+      s.detachView();
+      expect(s.viewDetached()).toBe(false);
+      expect(s.status()).toContain('Allow pop-ups');
+    });
+
+    it('docks again when the window cannot render', async () => {
+      const s = await store();
+      const { view } = fakeWindow(Promise.reject(new Error('no GPU')));
+      s.detachView();
+      await view.ready.catch(() => undefined);
+      await Promise.resolve();
+      expect(s.viewDetached()).toBe(false);
+      expect(s.status()).toContain('no GPU');
+    });
+
+    it("runs the page's key handlers for keys pressed in the window", async () => {
+      const s = await store();
+      const { options } = fakeWindow();
+      s.detachView();
+      const seen: string[] = [];
+      const handler = (e: KeyboardEvent) => {
+        seen.push(e.key);
+        e.preventDefault();
+      };
+      document.addEventListener('keydown', handler);
+      const key = new KeyboardEvent('keydown', { key: 'v', cancelable: true });
+      options().onKeyDown!(key);
+      document.removeEventListener('keydown', handler);
+      expect(seen).toEqual(['v']);
+      expect(key.defaultPrevented).toBe(true);
+    });
+  });
+
+  describe('slicer window', () => {
+    /** A same-origin window stand-in with its own document. */
+    function fakePopup() {
+      const doc = document.implementation.createHTMLDocument('');
+      const target = new EventTarget();
+      const win = Object.assign(target, {
+        document: doc,
+        closed: false,
+        focus: vi.fn(),
+        close: vi.fn(() => {
+          win.closed = true;
+          target.dispatchEvent(new Event('pagehide'));
+        }),
+      });
+      vi.spyOn(window, 'open').mockReturnValue(win as unknown as Window);
+      return win;
+    }
+
+    afterEach(() => vi.restoreAllMocks());
+
+    it('opens the slicer in its own window and back', async () => {
+      const s = await store();
+      const win = fakePopup();
+      s.toggleSlicerDetached();
+      expect(s.slicerWindow()).toBe(win);
+      expect(s.slicerOpen()).toBe(true);
+      expect(win.document.title).toBe('Object Slicer');
+      s.toggleSlicerDetached();
+      expect(win.close).toHaveBeenCalled();
+      expect(s.slicerWindow()).toBeUndefined();
+      expect(s.slicerOpen()).toBe(true);
+    });
+
+    it('closing the window closes the slicer', async () => {
+      const s = await store();
+      const win = fakePopup();
+      s.detachSlicer();
+      win.close();
+      expect(s.slicerWindow()).toBeUndefined();
+      expect(s.slicerOpen()).toBe(false);
+    });
+
+    it('closing the slicer closes its window', async () => {
+      const s = await store();
+      const win = fakePopup();
+      s.detachSlicer();
+      s.slicerOpen.set(false);
+      TestBed.tick();
+      expect(win.close).toHaveBeenCalled();
+      expect(s.slicerWindow()).toBeUndefined();
+    });
+
+    it('stays in the page when the pop-up is blocked', async () => {
+      const s = await store();
+      vi.spyOn(window, 'open').mockReturnValue(null);
+      s.detachSlicer();
+      expect(s.slicerWindow()).toBeUndefined();
+      expect(s.status()).toContain('Allow pop-ups');
     });
   });
 });

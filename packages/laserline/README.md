@@ -16,6 +16,25 @@ new AnimationLoop((dt) => {
 }).start();
 ```
 
+The live view can also run in a window of its own (a popup, e.g. fullscreen on a
+projector). Open it from a user action, render it every frame, and take the animation
+frames from the popup while it is visible:
+
+```ts
+import { DetachedLaserView } from '@javerik/laserline';
+
+button.onclick = () => {
+  const detached = DetachedLaserView.open({ onClose: () => loop.setWindow(window) });
+  if (!detached) return; // pop-up blocked
+  loop.setWindow(detached.window);
+  // in the loop: detached.render(emulator); detached.close() to dock it again
+};
+```
+
+For other views in other windows, `openPopup()` opens an empty same-origin window and
+`CanvasBridge` shows frames of a view created with `createOffscreen(bridge.offscreen)` on
+a canvas there (call `bridge.present()` after each render).
+
 Slicing STL models runs in a Web Worker:
 
 ```ts

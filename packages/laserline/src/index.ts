@@ -3,6 +3,7 @@
  *
  * Call {@link init} once before using anything else. Then:
  * - `Emulator` + `LaserView`: the animated laser line on a canvas,
+ *   {@link DetachedLaserView}: the same in a window of its own,
  * - `Slicer` + `MeshView` + {@link SliceRunner}: STL import, slicing in a Web
  *   Worker and the 3D preview,
  * - `Scan`, `Mesh`, presets and plot helpers.
@@ -11,7 +12,9 @@ import initWasm from '../wasm/laserline.js';
 import type { InitInput, LaserParams, LiveInfo, SliceSettings } from '../wasm/laserline.js';
 
 export * from '../wasm/laserline.js';
-export { AnimationLoop } from './loop.js';
+export { AnimationLoop, type FrameScheduler } from './loop.js';
+export { DetachedLaserView, type DetachedViewOptions } from './detached-view.js';
+export { CanvasBridge, openPopup, type PopupOptions } from './popup.js';
 export { readFileBytes, downloadBytes } from './files.js';
 export { SliceWorkerClient, type SliceResult } from './slice-client.js';
 export type { FromWorker, ToWorker } from './protocol.js';

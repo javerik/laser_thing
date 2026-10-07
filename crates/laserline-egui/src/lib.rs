@@ -6,6 +6,10 @@
 //! ([`LaserUi::slicer_panels`]). Window layout, shortcuts and persistence stay with the
 //! application; see the `laserline-desktop` app for a complete example.
 //!
+//! Every panel can live in the main window or a window of its own: [`show_window`]
+//! shows content in a separate OS window (with a floating-window fallback). Apps should
+//! keep the live view detachable and dockable that way.
+//!
 //! Requirements:
 //! - egui must render with wgpu; call [`LaserUi::install_gpu`] once with the
 //!   `egui_wgpu::RenderState` (eframe: `CreationContext::wgpu_render_state`).
@@ -19,6 +23,7 @@ mod callbacks;
 mod files;
 mod laser_ui;
 mod slicer_ui;
+mod window;
 mod worker;
 
 pub use callbacks::{LaserCallback, MeshViewCallback, install as install_renderers};
@@ -27,5 +32,6 @@ pub use laser_ui::{
     LaserUi, color_ui, deform_ui, grid, line_ui, motion_ui, noise_ui, plot, profile_ui, row, scan_params_ui, section,
 };
 pub use slicer_ui::{handle_camera_input, profile_plot, project, scan_summary, slice_settings_ui};
+pub use window::show_window;
 pub use worker::SliceWorker;
 pub use {egui, egui_wgpu, laserline_core as core};

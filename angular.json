@@ -98,7 +98,15 @@
               "buildTarget": "laserline-web:build:development"
             }
           },
-          "defaultConfiguration": "development"
+          "defaultConfiguration": "development",
+          "options": {
+            "prebundle": {
+              "exclude": [
+                "@javerik/laserline",
+                "@javerik/laserline-angular"
+              ]
+            }
+          }
         },
         "test": {
           "builder": "@angular/build:unit-test",

@@ -18,6 +18,21 @@ egui::CentralPanel::default().show(ctx, |p| {
 });
 ```
 
+The live view can be detached into a window of its own and docked again; keep a flag and
+use `show_window` (it falls back to a floating egui window where the backend has no
+multi-viewport support):
+
+```rust
+if view_detached {
+    let builder = egui::ViewportBuilder::default().with_title("Live view").with_inner_size([1280.0, 720.0]);
+    view_detached = laserline_egui::show_window(ctx, egui::ViewportId::from_hash_of("live"), builder,
+        egui::Frame::NONE, |p| {
+            let rect = p.max_rect();
+            ui.live_view(p, rect);
+        });
+}
+```
+
 `files` implements `FileHost` (file dialogs are the application's business). See
 `apps/laserline-desktop` in the repository for a complete application.
 

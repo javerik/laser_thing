@@ -1,6 +1,7 @@
-import { Injectable, NgZone, OnDestroy, inject, signal } from '@angular/core';
+import { Injectable, NgZone, OnDestroy, effect, inject, signal, untracked } from '@angular/core';
 import {
   AnimationLoop,
+  DetachedLaserView,
   Emulator,
   type FullLaserParams,
   type FullLiveInfo,
@@ -20,6 +21,7 @@ import {
   defaultSliceSettings,
   downloadBytes,
   init,
+  openPopup,
   presetFromJson,
   presetToJson,
   readFileBytes,
@@ -67,9 +69,15 @@ const NO_LIVE: FullLiveInfo = {
   scan: undefined as unknown as FullLiveInfo['scan'],
 };
 
+interface LaserViewEntry {
+  view: LaserView;
+  afterRender?: () => void;
+}
+
 interface MeshViewEntry {
   view: MeshView;
   onLabels: (labels: ViewLabel[]) => void;
+  afterRender?: () => void;
 }
 
 /**
@@ -100,10 +108,22 @@ export class LaserlineStore implements OnDestroy {
   readonly slicer = signal<SlicerState>(IDLE);
   /** The slicer panel is shown. */
   readonly slicerOpen = signal(false);
+  /**
+   * The window the slicer is shown in (`detachSlicer()`), if not in the page. Render the
+   * slicer there with `<ll-window-portal>`.
+   */
+  readonly slicerWindow = signal<Window | undefined>(undefined);
   readonly status = signal<string | undefined>(undefined);
   readonly presets = signal<Preset[]>([]);
   /** Graphics API of the first view, e.g. "WebGL2". */
   readonly backend = signal<string | undefined>(undefined);
+  /**
+   * The live view is shown in a window of its own (`detachView()`); `<ll-laser-view>`
+   * shows a placeholder meanwhile.
+   */
+  readonly viewDetached = signal(false);
+  /** The window showing the live view (this page or the detached one) is fullscreen. */
+  readonly fullscreen = signal(false);
   /** A slicing worker is configured. */
   readonly canSlice = !!this.config.createWorker;
 
@@ -112,8 +132,18 @@ export class LaserlineStore implements OnDestroy {
   private runner?: SliceRunner;
   private client?: SliceWorkerClient;
   private readonly loop = new AnimationLoop((dt) => this.frame(dt));
-  private readonly laserViews = new Set<LaserView>();
+  private readonly laserViews = new Set<LaserViewEntry>();
   private readonly meshViews = new Set<MeshViewEntry>();
+  private detached?: DetachedLaserView;
+  private readonly syncWindows = () => {
+    const popup = this.detached;
+    // A hidden window gets no animation frames: follow one being looked at, preferring
+    // the live view's.
+    const shown = (w: Window | undefined) => !!w && !w.closed && w.document.visibilityState === 'visible';
+    const candidates = [popup?.visible ? popup.window : undefined, window, this.slicerWindow()];
+    this.loop.setWindow(candidates.find(shown) ?? window);
+    this.fullscreen.set(popup ? popup.fullscreen : !!document.fullscreenElement);
+  };
   private lastReadout = 0;
   private statusTimer?: ReturnType<typeof setTimeout>;
   private persistTimer?: ReturnType<typeof setTimeout>;
@@ -129,9 +159,19 @@ export class LaserlineStore implements OnDestroy {
 
   constructor() {
     this.loaded.catch(() => undefined);
+    document.addEventListener('fullscreenchange', this.syncWindows);
+    document.addEventListener('visibilitychange', this.syncWindows);
+    // Closing the slicer also closes its window.
+    effect(() => {
+      if (!this.slicerOpen()) untracked(() => this.dockSlicer());
+    });
   }
 
   ngOnDestroy(): void {
+    document.removeEventListener('fullscreenchange', this.syncWindows);
+    document.removeEventListener('visibilitychange', this.syncWindows);
+    this.dockView();
+    this.dockSlicer();
     this.loop.stop();
     this.client?.dispose();
     clearTimeout(this.statusTimer);
@@ -188,9 +228,15 @@ export class LaserlineStore implements OnDestroy {
     emu.tick(dt);
     const now = performance.now();
     this.runner?.poll(now / 1000);
-    let live: FullLiveInfo | undefined;
-    for (const view of this.laserViews) live ??= view.render(emu) as FullLiveInfo;
-    for (const { view, onLabels } of this.meshViews) onLabels(view.render(this.slicerCore!, emu));
+    let live = this.detached?.render(emu) as FullLiveInfo | undefined;
+    for (const { view, afterRender } of this.laserViews) {
+      live ??= view.render(emu) as FullLiveInfo;
+      afterRender?.();
+    }
+    for (const { view, onLabels, afterRender } of this.meshViews) {
+      onLabels(view.render(this.slicerCore!, emu));
+      afterRender?.();
+    }
     if (this.row() !== emu.currentRow) this.row.set(emu.currentRow);
     if (now - this.lastReadout >= READOUT_MS) {
       this.lastReadout = now;
@@ -221,20 +267,127 @@ export class LaserlineStore implements OnDestroy {
 
   // ---- views
 
-  /** Draws `view` every frame until the returned function is called. */
-  attachLaserView(view: LaserView): () => void {
-    this.laserViews.add(view);
+  /**
+   * Draws `view` every frame until the returned function is called, then calls
+   * `afterRender` (e.g. `CanvasBridge.present`).
+   */
+  attachLaserView(view: LaserView, afterRender?: () => void): () => void {
+    const entry = { view, afterRender };
+    this.laserViews.add(entry);
     this.backend.set(view.backend);
-    return () => this.laserViews.delete(view);
+    return () => this.laserViews.delete(entry);
   }
 
-  /** Draws `view` every frame until the returned function is called. */
-  attachMeshView(view: MeshView, onLabels: (labels: ViewLabel[]) => void): () => void {
-    const entry = { view, onLabels };
+  /** Like `attachLaserView`; `onLabels` gets the view's labels after each frame. */
+  attachMeshView(view: MeshView, onLabels: (labels: ViewLabel[]) => void, afterRender?: () => void): () => void {
+    const entry = { view, onLabels, afterRender };
     this.meshViews.add(entry);
     this.backend.update((b) => b ?? view.backend);
     return () => this.meshViews.delete(entry);
   }
+
+  // ---- live view window
+
+  /**
+   * Moves the live view into a window of its own, e.g. to show it fullscreen on another
+   * screen. Call it from a user action (click, key press): browsers block pop-ups
+   * otherwise. Key presses in that window are dispatched on this page's `document.body`
+   * as well, so the page's shortcuts keep working there.
+   */
+  detachView(): void {
+    if (this.detached || !this.ready()) return;
+    const view = DetachedLaserView.open({
+      backend: this.config.backend ?? 'auto',
+      onClose: () => this.dockView(),
+      onKeyDown: (e) => forwardKey(e),
+      onChange: this.syncWindows,
+    });
+    if (!view) {
+      this.setStatus('Allow pop-ups for this page to detach the live view');
+      return;
+    }
+    this.detached = view;
+    this.viewDetached.set(true);
+    this.syncWindows();
+    view.ready.then(
+      () => {
+        if (this.detached === view) this.backend.set(view.backend);
+      },
+      (e: unknown) => {
+        if (this.detached !== view) return;
+        this.dockView();
+        this.setStatus(`Detaching the live view failed: ${message(e)}`);
+      },
+    );
+  }
+
+  /** Puts the live view back into the page and closes its window. */
+  dockView(): void {
+    const view = this.detached;
+    if (!view) return;
+    this.detached = undefined;
+    view.close();
+    this.viewDetached.set(false);
+    this.syncWindows();
+  }
+
+  toggleViewDetached(): void {
+    if (this.detached) this.dockView();
+    else this.detachView();
+  }
+
+  /**
+   * Toggles fullscreen of the window showing the live view (the detached one, or this
+   * page). Call it from a user action.
+   */
+  toggleFullscreen(): void {
+    if (this.detached) this.detached.toggleFullscreen();
+    else if (document.fullscreenElement) void document.exitFullscreen();
+    else void document.documentElement.requestFullscreen().catch(() => undefined);
+  }
+
+  // ---- slicer window
+
+  /**
+   * Opens the slicer in a window of its own (call it from a user action, like
+   * `detachView()`); render it there with `<ll-window-portal [window]="store.slicerWindow()">`.
+   * Closing that window closes the slicer.
+   */
+  detachSlicer(): void {
+    if (this.slicerWindow() || !this.ready()) return;
+    const win = openPopup({ name: 'laserline-slicer', title: 'Object Slicer', features: 'popup,width=1200,height=820' });
+    if (!win) {
+      this.setStatus('Allow pop-ups for this page to open the slicer in its own window');
+      return;
+    }
+    win.addEventListener('pagehide', () => {
+      if (this.slicerWindow() !== win) return;
+      this.slicerWindow.set(undefined);
+      this.slicerOpen.set(false);
+      this.syncWindows();
+    });
+    win.addEventListener('keydown', forwardKey);
+    win.document.addEventListener('visibilitychange', this.syncWindows);
+    this.slicerWindow.set(win);
+    this.slicerOpen.set(true);
+    this.syncWindows();
+  }
+
+  /** Closes the slicer's window; the slicer shows in the page again if still open. */
+  dockSlicer(): void {
+    const win = this.slicerWindow();
+    if (!win) return;
+    this.slicerWindow.set(undefined);
+    win.close();
+    this.syncWindows();
+  }
+
+  toggleSlicerDetached(): void {
+    if (this.slicerWindow()) this.dockSlicer();
+    else this.detachSlicer();
+  }
+
+  // ---- 3D view camera
 
   orbit(dx: number, dy: number): void {
     this.slicerCore?.orbit(dx, dy);
@@ -437,6 +590,17 @@ export class LaserlineStore implements OnDestroy {
 
 function message(e: unknown): string {
   return e instanceof Error ? e.message : String(e);
+}
+
+/** Runs this page's key handlers for a key press in one of its other windows. */
+function forwardKey(e: KeyboardEvent): void {
+  // Typing into the window's own fields is not a shortcut.
+  if ((e.target as Element | null)?.closest?.('input, select, textarea, [contenteditable]')) return;
+  const { key, code, location, repeat, ctrlKey, shiftKey, altKey, metaKey } = e;
+  const copy = new KeyboardEvent('keydown', {
+    key, code, location, repeat, ctrlKey, shiftKey, altKey, metaKey, bubbles: true, cancelable: true,
+  });
+  if (!document.body.dispatchEvent(copy)) e.preventDefault();
 }
 
 function sameLive(a: FullLiveInfo, b: FullLiveInfo): boolean {
