@@ -8,6 +8,12 @@ license.workspace = true
 authors.workspace = true
 repository.workspace = true
 homepage.workspace = true
+readme = "README.md"
+keywords = ["laser", "triangulation", "stl", "slicer", "emulator"]
+categories = ["science", "simulation", "graphics", "wasm"]
+
+[package.metadata.docs.rs]
+all-features = true
 
 [features]
 # Exposes test helpers (`mesh::box_mesh`) to other crates' tests.
