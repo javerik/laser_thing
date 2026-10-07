@@ -1,4 +1,5 @@
 import { InjectionToken } from '@angular/core';
+import type { RemoteHostOptions } from '@javerik/laserline';
 
 /** Configuration passed to `provideLaserline()`. */
 export interface LaserlineConfig {
@@ -18,6 +19,12 @@ export interface LaserlineConfig {
   backend?: 'auto' | 'webgpu' | 'webgl';
   /** Prefix of the localStorage keys that persist the settings; `null` disables persistence. */
   storagePrefix?: string | null;
+  /**
+   * Let other pages of this origin drive the line over a `BroadcastChannel` (see
+   * `RemoteHost` in `@javerik/laserline`), e.g. to calibrate a camera filming it. Off by
+   * default; `true` uses the default channel.
+   */
+  remote?: boolean | RemoteHostOptions;
 }
 
 /** Injection token of the {@link LaserlineConfig}. */

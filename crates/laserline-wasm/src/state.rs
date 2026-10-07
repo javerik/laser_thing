@@ -2,7 +2,7 @@
 
 use crate::data::{Bounds, GridInfo, Mesh, Scan};
 use crate::{from_js, to_js};
-use laserline_core::{emulator, scan, slicer};
+use laserline_core::{calibration, emulator, scan, slicer};
 use serde::Serialize;
 use wasm_bindgen::prelude::*;
 
@@ -116,6 +116,36 @@ impl Emulator {
     #[wasm_bindgen(getter)]
     pub fn scan(&self) -> Option<Scan> {
         self.inner.scan.clone().map(|inner| Scan { inner })
+    }
+
+    /// Area the line drawn with `params` covers in a `viewW`×`viewH` px view over its
+    /// whole motion, deformation and the scan being played (if `params` enable it).
+    #[wasm_bindgen(unchecked_return_type = "Envelope")]
+    pub fn envelope(
+        &self,
+        #[wasm_bindgen(unchecked_param_type = "LaserParams")] params: JsValue,
+        #[wasm_bindgen(js_name = viewW)] view_w: f32,
+        #[wasm_bindgen(js_name = viewH)] view_h: f32,
+    ) -> Result<JsValue, JsError> {
+        let params = from_js(params)?;
+        Ok(to_js(&calibration::line_envelope(&params, [view_w, view_h], self.inner.scan.as_deref())))
+    }
+
+    /// `params` moved into the middle of the convex `field` (view px corners) and, where
+    /// needed, shrunk so the line's envelope stays `margin` px inside it.
+    #[wasm_bindgen(js_name = fitInto, unchecked_return_type = "Fit")]
+    pub fn fit_into(
+        &self,
+        #[wasm_bindgen(unchecked_param_type = "LaserParams")] params: JsValue,
+        #[wasm_bindgen(unchecked_param_type = "[number, number][]")] field: JsValue,
+        #[wasm_bindgen(js_name = viewW)] view_w: f32,
+        #[wasm_bindgen(js_name = viewH)] view_h: f32,
+        margin: f32,
+    ) -> Result<JsValue, JsError> {
+        let params = from_js(params)?;
+        let field: Vec<[f32; 2]> = from_js(field)?;
+        let fit = calibration::fit_into(&params, &field, [view_w, view_h], margin, self.inner.scan.as_deref());
+        Ok(to_js(&fit))
     }
 }
 

@@ -27,6 +27,15 @@
     `motionOffset`, `lineAngle`, `extentAlong`, `niceStep`, `Mesh.vertices()` /
     `triangles()`, `Scan.heights()` / `visibility()` / `rowVisible()` / `seen()` /
     `uCenterMm`, `Slicer.clearModel()`, and an `isCancelled` callback for `slice`.
+- Camera calibration support: another page of the same origin can drive the line over a
+  `BroadcastChannel` (`RemoteHost` in `@javerik/laserline`, `provideLaserline({ remote: true })`,
+  on in `laserline-web`). It reads the view size and the line's envelope, shows
+  calibration patterns (a blank view, lines across it) while the user's parameters stay
+  aside, and reports the part of the view its camera sees. That field is outlined over the
+  view, and "Fit line to camera" (`LaserlineStore.fitToCameraField()`) moves and shrinks
+  the line into it. Core: `laserline_core::calibration` (`line_envelope`,
+  `calibration_params`, `pattern_params`, `fit_into`); JS: `Emulator.envelope` /
+  `fitInto`, `calibrationParams`, `patternParams`, `DetachedLaserView.setOverlay`.
 - Every public Rust item and every TypeScript export is documented; `missing_docs` and
   `scripts/check-dts-docs.mjs` (part of `npm test`) enforce it, and the crate READMEs
   are compiled as doctests.

@@ -86,7 +86,27 @@ preset JSON files.
 | `defaultParams`, `defaultSliceSettings`, `builtinPresets`, `presetToJson`, `presetFromJson` | Parameters and presets |
 | `profileCurve`, `deformCurve`, `sampleDeformation`, `motionOffset`, `lineAngle`, `extentAlong`, `laserRgb`, `wavelengthToRgb`, `niceStep` | Line model and plot helpers |
 | `actionForKey`, `SHORTCUTS`, `shortcutHelp` | Keyboard shortcuts |
+| `RemoteHost`, `ToLaserline`, `FromLaserline`, `REMOTE_CHANNEL` | Let another page drive the line (camera calibration), see below |
+| `Emulator.envelope`, `Emulator.fitInto`, `calibrationParams`, `patternParams` | The line's envelope over its whole motion; fitting it into a camera field; calibration patterns |
 | `readFileBytes`, `downloadBytes` | File helpers |
+
+### Remote control (camera calibration)
+
+A `RemoteHost` lets another page of the same origin drive the line over the
+`BroadcastChannel` `laserline-remote`, e.g. an application that calibrates a camera
+filming the screen. Messages carry `v: 1`; all coordinates are view pixels (the live
+view's drawing buffer, y down).
+
+| To laserline | Answer |
+|---|---|
+| `hello` | `status` from every window: `host` id, `viewPx`, the user's line `envelope`, `session`, `field` |
+| `begin { to, session }` | `status`; the user's parameters are kept aside, the view goes blank and pauses. A second session gets `error`. |
+| `show { to, session, id, pattern }` | `shown { id, viewPx }` once the pattern (`{ kind: 'blank' }` or `{ kind: 'line', orientation, position_pct }`) has been on screen for a frame |
+| `end { to, session }` | `status`; parameters and playback come back. A session also ends after 15 s without messages. |
+| `camera-field { to, polygon, label }` | `status`; the window outlines the polygon (`null` removes it) |
+| `fit-to-field { to, id, margin }` | `fitted { id, fits }` after moving and shrinking the line into the field |
+
+The live view must stay visible: hidden windows get no animation frames, so no `shown`.
 
 For Angular components, see `@javerik/laserline-angular`.
 

@@ -92,6 +92,14 @@ function bindView<V extends { free(): void; resize(w: number, h: number): void }
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
     <canvas #canvas (dblclick)="activate.emit()"></canvas>
+    @if (field(); as f) {
+      <svg class="field" [attr.viewBox]="f.viewBox" preserveAspectRatio="none" aria-hidden="true">
+        <polygon [attr.points]="f.points" />
+        @if (f.label) {
+          <text [attr.x]="f.labelAt[0]" [attr.y]="f.labelAt[1]">{{ f.label }}</text>
+        }
+      </svg>
+    }
     @if (error(); as e) {
       <div class="message error">{{ e }}</div>
     }
@@ -102,6 +110,9 @@ function bindView<V extends { free(): void; resize(w: number, h: number): void }
       :host { display: block; position: relative; background: #000; overflow: hidden; }
       canvas { display: block; width: 100%; height: 100%; }
       .message { position: absolute; left: 0; right: 0; bottom: 24px; text-align: center; }
+      .field { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
+      .field polygon { fill: none; stroke: var(--_warn); stroke-width: 1.5; stroke-dasharray: 6 4; vector-effect: non-scaling-stroke; }
+      .field text { fill: var(--_warn); font-size: 12px; }
     `,
   ],
 })
@@ -110,9 +121,23 @@ export class LlLaserCanvas {
   /** Double click, e.g. to toggle fullscreen. */
   readonly activate = output<void>();
   protected readonly error = signal<string | undefined>(undefined);
+  private readonly store = inject(LaserlineStore);
+  /** The camera field's outline, in the drawing buffer's pixels; hidden while calibrating. */
+  protected readonly field = computed(() => {
+    const polygon = this.store.cameraField();
+    const [w, h] = this.store.live().view_px;
+    if (!polygon || !this.store.showCameraField() || this.store.calibrating() || w <= 0 || h <= 0) return undefined;
+    const top = polygon.reduce((a, p) => (p[1] < a[1] || (p[1] === a[1] && p[0] < a[0]) ? p : a));
+    return {
+      viewBox: `0 0 ${w} ${h}`,
+      points: polygon.map((p) => p.join(',')).join(' '),
+      label: this.store.cameraFieldLabel(),
+      labelAt: [top[0] + 6, top[1] + 16],
+    };
+  });
 
   constructor() {
-    const store = inject(LaserlineStore);
+    const store = this.store;
     const backend = inject(LASERLINE_CONFIG).backend ?? 'auto';
     bindView(
       () => this.canvas().nativeElement,

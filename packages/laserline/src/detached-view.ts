@@ -32,6 +32,9 @@ const STYLE = `
   }
   body:hover button, button:focus-visible { opacity: 1; }
   .message { position: fixed; left: 0; right: 0; bottom: 24px; text-align: center; font: 16px system-ui, sans-serif; color: #e06c6c; }
+  svg { position: fixed; inset: 0; width: 100vw; height: 100vh; pointer-events: none; }
+  svg polygon { fill: none; stroke: #e8b44a; stroke-width: 1.5; stroke-dasharray: 6 4; vector-effect: non-scaling-stroke; }
+  svg text { fill: #e8b44a; font: 12px system-ui, sans-serif; }
   :root:fullscreen button { display: none; }
   :root:fullscreen canvas { cursor: none; }
 `;
@@ -52,6 +55,7 @@ export class DetachedLaserView {
   private size: [number, number] = [0, 0];
   private closed = false;
   private readonly bridge: CanvasBridge;
+  private overlay?: SVGSVGElement;
 
   private constructor(
     private readonly win: Window,
@@ -165,6 +169,36 @@ export class DetachedLaserView {
     const info = this.view.render(emulator);
     this.bridge.present();
     return info;
+  }
+
+  /**
+   * Outlines `polygon` (view px, e.g. the part of the view a camera sees) over the view,
+   * with an optional `label`; `undefined` removes the outline.
+   */
+  setOverlay(polygon: [number, number][] | undefined, label?: string): void {
+    if (this.closed || this.win.closed) return;
+    this.overlay?.remove();
+    this.overlay = undefined;
+    if (!polygon?.length) return;
+    const doc = this.win.document;
+    const ns = 'http://www.w3.org/2000/svg';
+    const svg = doc.createElementNS(ns, 'svg');
+    const [w, h] = this.measure();
+    svg.setAttribute('viewBox', `0 0 ${w} ${h}`);
+    svg.setAttribute('preserveAspectRatio', 'none');
+    const shape = doc.createElementNS(ns, 'polygon');
+    shape.setAttribute('points', polygon.map((p) => p.join(',')).join(' '));
+    svg.append(shape);
+    if (label) {
+      const text = doc.createElementNS(ns, 'text');
+      const top = polygon.reduce((a, p) => (p[1] < a[1] || (p[1] === a[1] && p[0] < a[0]) ? p : a));
+      text.setAttribute('x', String(top[0] + 6));
+      text.setAttribute('y', String(top[1] + 16));
+      text.textContent = label;
+      svg.append(text);
+    }
+    doc.body.append(svg);
+    this.overlay = svg;
   }
 
   /** Releases the GPU resources and closes the window. Safe to call repeatedly. */

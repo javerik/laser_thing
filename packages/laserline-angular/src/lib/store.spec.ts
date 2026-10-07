@@ -1,18 +1,26 @@
 import { TestBed } from '@angular/core/testing';
-import { DetachedLaserView, type DetachedViewOptions, init, profileCurve } from '@javerik/laserline';
+import {
+  DetachedLaserView,
+  type DetachedViewOptions,
+  type FromLaserline,
+  type LaserView,
+  type ToLaserline,
+  init,
+  profileCurve,
+} from '@javerik/laserline';
 import { readFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
-import { LASERLINE_CONFIG } from './config';
+import { LASERLINE_CONFIG, type LaserlineConfig } from './config';
 import { LaserlineStore } from './store';
 
 // The store would fetch `wasmUrl`; load the module from disk first so it reuses it.
 // Tests run from the workspace root.
 const wasm = readFile(resolve('packages/laserline/wasm/laserline_bg.wasm'));
 
-async function store(storagePrefix: string | null = 'test.'): Promise<LaserlineStore> {
+async function store(storagePrefix: string | null = 'test.', extra: Partial<LaserlineConfig> = {}): Promise<LaserlineStore> {
   await init(await wasm);
   TestBed.configureTestingModule({
-    providers: [{ provide: LASERLINE_CONFIG, useValue: { wasmUrl: 'unused', storagePrefix } }, LaserlineStore],
+    providers: [{ provide: LASERLINE_CONFIG, useValue: { wasmUrl: 'unused', storagePrefix, ...extra } }, LaserlineStore],
   });
   const s = TestBed.inject(LaserlineStore);
   await s.loaded;
@@ -126,6 +134,7 @@ describe('LaserlineStore windows', () => {
         render: vi.fn(),
         close: vi.fn(),
         toggleFullscreen: vi.fn(),
+        setOverlay: vi.fn(),
       };
       vi.spyOn(DetachedLaserView, 'open').mockImplementation((o) => {
         options = o;
@@ -268,6 +277,105 @@ describe('LaserlineStore windows', () => {
       s.detachSlicer();
       expect(s.slicerWindow()).toBeUndefined();
       expect(s.status()).toContain('Allow pop-ups');
+    });
+  });
+
+  describe('remote calibration', () => {
+    const VIEW = [1000, 500];
+    const channels: BroadcastChannel[] = [];
+    afterEach(() => channels.splice(0).forEach((c) => c.close()));
+
+    /** A store with a fake view (rendering `VIEW`), a frame stepper and a controller channel. */
+    async function remoteStore(name: string) {
+      const s = await store('test.', { remote: { channel: name } });
+      const rendered: unknown[] = [];
+      const view = {
+        backend: 'fake',
+        render: (emu: { params: unknown }) => {
+          rendered.push(emu.params);
+          return { view_px: VIEW, center_px: [500, 250], offset_px: 0, length_px: 800, extent_along_px: 1000 };
+        },
+      } as unknown as LaserView;
+      s.attachLaserView(view);
+      const step = () => (s as unknown as { frame(dt: number): void }).frame(0.016);
+      const ch = new BroadcastChannel(name);
+      channels.push(ch);
+      const got: FromLaserline[] = [];
+      ch.onmessage = (e) => got.push(e.data);
+      type Msg = { [K in ToLaserline['type']]: Omit<Extract<ToLaserline, { type: K }>, 'v'> }[ToLaserline['type']];
+      const send = (msg: Msg) => ch.postMessage({ v: 1, ...msg });
+      const next = async <T extends FromLaserline['type']>(type: T) => {
+        for (let i = 0; i < 200; i++) {
+          const k = got.findIndex((m) => m.type === type);
+          if (k >= 0) return got.splice(k, 1)[0] as Extract<FromLaserline, { type: T }>;
+          await new Promise((r) => setTimeout(r, 5));
+        }
+        throw new Error(`no ${type}`);
+      };
+      const until = async (cond: () => boolean) => {
+        for (let i = 0; i < 200 && !cond(); i++) await new Promise((r) => setTimeout(r, 5));
+        expect(cond()).toBe(true);
+      };
+      return { s, step, send, next, until, rendered };
+    }
+
+    it('reports the view and the envelope of the user\'s line', async () => {
+      const { s, step, send, next } = await remoteStore('spec-remote-1');
+      step();
+      send({ type: 'hello' });
+      const status = (await next('status')).status;
+      expect(status.viewPx).toEqual(VIEW);
+      expect(status.envelope!.center_px).toEqual([500, 250]);
+      expect(status.session).toBeNull();
+      s.ngOnDestroy();
+    });
+
+    it('shows patterns without touching the parameters, then restores them', async () => {
+      const { s, step, send, next, until, rendered } = await remoteStore('spec-remote-2');
+      step();
+      send({ type: 'hello' });
+      const host = (await next('status')).host;
+      const before = s.params();
+      send({ type: 'begin', to: host, session: 'cal' });
+      await until(() => s.calibrating());
+      send({ type: 'show', to: host, session: 'cal', id: 1, pattern: { kind: 'line', orientation: 'Vertical', position_pct: 30 } });
+      await new Promise((r) => setTimeout(r, 20));
+      step();
+      const drawn = rendered.at(-1) as typeof before;
+      expect(drawn.line.orientation).toBe('Vertical');
+      expect(drawn.line.position_pct).toEqual([30, 50]);
+      expect(drawn.profile.kind).toBe('Hard');
+      step();
+      expect((await next('shown')).id).toBe(1);
+      // Edits during the session wait for its end.
+      s.patchParams({ line: { ...before.line, width_px: 9 } });
+      step();
+      expect((rendered.at(-1) as typeof before).line.orientation).toBe('Vertical');
+      send({ type: 'end', to: host, session: 'cal' });
+      await until(() => !s.calibrating());
+      step();
+      expect((rendered.at(-1) as typeof before).line.width_px).toBe(9);
+      expect(s.playing()).toBe(true);
+      s.ngOnDestroy();
+    });
+
+    it('keeps the camera field and fits the line into it', async () => {
+      const { s, step, send, next, until } = await remoteStore('spec-remote-3');
+      step();
+      send({ type: 'hello' });
+      const host = (await next('status')).host;
+      const field: [number, number][] = [[400, 100], [700, 100], [700, 300], [400, 300]];
+      send({ type: 'camera-field', to: host, polygon: field, label: 'cam 0' });
+      await until(() => !!s.cameraField());
+      expect(s.cameraField()).toEqual(field);
+      expect(s.cameraFieldLabel()).toBe('cam 0');
+      expect(JSON.parse(localStorage.getItem('test.camera_field')!).label).toBe('cam 0');
+      send({ type: 'fit-to-field', to: host, id: 5, margin: 10 });
+      expect((await next('fitted')).fits).toBe(true);
+      expect(s.params().line.position_pct[0]).toBeCloseTo(55, 1);
+      s.setCameraField(undefined);
+      expect(localStorage.getItem('test.camera_field')).toBeNull();
+      s.ngOnDestroy();
     });
   });
 });

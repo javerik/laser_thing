@@ -184,6 +184,33 @@ export class LlObjectScan {
 }
 
 /**
+ * The camera a remote page calibrated against the line: its field's outline and fitting
+ * the line into it. Shows nothing until a field is known or a calibration runs.
+ */
+@Component({
+  selector: 'll-camera-field',
+  changeDetection: ChangeDetectionStrategy.OnPush,
+  template: `
+    @if (store.calibrating()) {
+      <p class="warn">Calibrating a camera from another window. Keep this view visible; your settings come back when it ends.</p>
+    } @else if (store.cameraField()) {
+      <p class="weak">{{ store.cameraFieldLabel() ?? 'A camera' }} sees the outlined part of the view.</p>
+      <div class="row">
+        <button type="button" title="Center the line in the camera field and shrink its length and movement to fit" (click)="store.fitToCameraField()">
+          Fit line to camera
+        </button>
+        <label class="row"><input type="checkbox" [checked]="store.showCameraField()" (change)="store.setShowCameraField(!store.showCameraField())" /> Outline</label>
+        <button type="button" title="Forget the camera field" (click)="store.setCameraField(undefined)">Clear</button>
+      </div>
+    }
+  `,
+  styles: [THEME, `:host { display: flex; flex-direction: column; gap: 6px; } p { margin: 0; }`],
+})
+export class LlCameraField {
+  protected readonly store = inject(LaserlineStore);
+}
+
+/**
  * The complete control panel: transport, all line parameters, object scan, presets
  * and readouts. Renders once the store is loaded.
  */
@@ -201,6 +228,7 @@ export class LlObjectScan {
     LlObjectScan,
     LlPresets,
     LlReadout,
+    LlCameraField,
   ],
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
@@ -208,6 +236,11 @@ export class LlObjectScan {
       <p class="error">{{ e }}</p>
     } @else if (store.ready()) {
       <ll-transport />
+      @if (store.calibrating() || store.cameraField()) {
+        <ll-section heading="Camera" [resettable]="false">
+          <ll-camera-field />
+        </ll-section>
+      }
       @let p = store.params();
       @let live = store.live();
       <ll-section heading="Line" (reset)="reset('line')">

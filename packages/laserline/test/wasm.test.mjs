@@ -178,3 +178,22 @@ test('slices match the native build', { skip: !golden && 'set LASERLINE_GOLDEN t
     assert.deepEqual(Buffer.from(scan.toBytes()), await readFile(`${golden}/${file}`), file);
   }
 });
+
+test('calibration helpers', () => {
+  const p = ll.defaultParams();
+  const base = ll.calibrationParams(p);
+  assert.equal(base.profile.kind, 'Hard');
+  assert.equal(base.motion.kind, 'Static');
+  const line = ll.patternParams(base, { kind: 'line', orientation: 'Vertical', position_pct: 25 });
+  assert.deepEqual(line.line.position_pct, [25, 50]);
+  assert.equal(ll.patternParams(base, { kind: 'blank' }).line.intensity_pct, 0);
+
+  const emu = new ll.Emulator(undefined);
+  const e = emu.envelope(base, 1000, 500);
+  assert.deepEqual(e.center_px, [500, 250]);
+  assert.equal(e.corners.length, 4);
+  const fit = emu.fitInto(p, [[400, 100], [700, 100], [700, 300], [400, 300]], 1000, 500, 10);
+  assert.equal(fit.fits, true);
+  assert.ok(fit.params.line.length < p.line.length);
+  emu.free();
+});

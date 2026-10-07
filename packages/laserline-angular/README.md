@@ -78,6 +78,13 @@ key(e: KeyboardEvent) {
 The layout is not persisted: windows can only be opened from a user action, so a page
 always starts docked.
 
+With `provideLaserline({ …, remote: true })` other pages of the origin can calibrate a
+camera against the line (`RemoteHost` in `@javerik/laserline`). While one does,
+`store.calibrating()` is true and parameter edits wait for it to end; afterwards
+`store.cameraField()` holds the part of the view the camera sees, outlined over
+`<ll-laser-canvas>` and the detached view, and `<ll-camera-field>` (inside `<ll-controls>`)
+offers `store.fitToCameraField()`.
+
 Smaller pieces (`ll-laser-canvas`, `ll-line-controls`, `ll-mesh-view`, `ll-range-image`,
 `ll-slider`, …) and the `LaserlineStore` are exported for custom layouts.
 

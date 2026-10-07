@@ -9,6 +9,9 @@ profiles such a sensor would measure. Runs natively (egui) and in the browser
 - **Object scans**: slice an STL model as a sensor with a given triangulation angle sees
   it (including camera occlusion), preview it in 3D, and play the profiles back through
   the line. Scans save as `.lscan` files.
+- **Camera calibration** (web): another page of the same origin can drive the line over a
+  `BroadcastChannel` to calibrate a camera filming the screen, then outline the camera's
+  field and fit the line into it (`RemoteHost`, see `packages/laserline/README.md`).
 
 ## Layout
 

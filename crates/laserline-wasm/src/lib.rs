@@ -238,3 +238,20 @@ pub fn laser_rgb(#[wasm_bindgen(unchecked_param_type = "ColorParams")] color: Js
 pub fn wavelength_to_rgb(nm: f32) -> Vec<f32> {
     laserline_core::model::wavelength_to_rgb(nm).to_vec()
 }
+
+/// `params` as a clean calibration line: static, undeformed, no scan or noise, a hard
+/// profile without soft ends, full intensity; the colour is kept.
+#[wasm_bindgen(js_name = calibrationParams, unchecked_return_type = "LaserParams")]
+pub fn calibration_params(#[wasm_bindgen(unchecked_param_type = "LaserParams")] params: JsValue) -> Result<JsValue, JsError> {
+    Ok(to_js(&laserline_core::calibration::calibration_params(&from_js(params)?)))
+}
+
+/// `base` (from `calibrationParams`) showing `pattern`: nothing, or a line across the
+/// whole view at a given position.
+#[wasm_bindgen(js_name = patternParams, unchecked_return_type = "LaserParams")]
+pub fn pattern_params(
+    #[wasm_bindgen(unchecked_param_type = "LaserParams")] base: JsValue,
+    #[wasm_bindgen(unchecked_param_type = "Pattern")] pattern: JsValue,
+) -> Result<JsValue, JsError> {
+    Ok(to_js(&laserline_core::calibration::pattern_params(&from_js(base)?, from_js(pattern)?)))
+}

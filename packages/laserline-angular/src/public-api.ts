@@ -12,7 +12,7 @@ export { type LaserlineConfig, LASERLINE_CONFIG } from './lib/config';
 export { provideLaserline } from './lib/provide';
 export { LaserlineStore, type ControlsPlacement, type SlicerState } from './lib/store';
 export { LlLaserView, LlLaserCanvas, LlMeshView, LlRangeImage, LlProfilePlot } from './lib/views';
-export { LlControls, LlTransport, LlPresets, LlReadout, LlObjectScan, LlScanSummary, LlProfileStepper } from './lib/panels';
+export { LlControls, LlCameraField, LlTransport, LlPresets, LlReadout, LlObjectScan, LlScanSummary, LlProfileStepper } from './lib/panels';
 export { LlSlicer, LlSliceSettings } from './lib/slicer';
 export { LlWindowPortal } from './lib/window-portal';
 export {

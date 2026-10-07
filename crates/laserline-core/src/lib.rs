@@ -1,6 +1,7 @@
 #![doc = include_str!("../README.md")]
 #![warn(missing_docs)]
 
+pub mod calibration;
 pub mod camera;
 pub mod emulator;
 pub mod gpu_types;

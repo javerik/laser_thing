@@ -11,18 +11,24 @@ import {
   type LaserView,
   type MeshView,
   type ModelInfo,
+  type Pattern,
   type Preset,
+  RemoteHost,
+  type RemoteStatus,
   Scan,
   SliceRunner,
   SliceWorkerClient,
   Slicer,
   type ViewLabel,
+  type ViewPoint,
   builtinPresets,
+  calibrationParams,
   defaultParams,
   defaultSliceSettings,
   downloadBytes,
   init,
   openPopup,
+  patternParams,
   presetFromJson,
   presetToJson,
   readFileBytes,
@@ -35,6 +41,10 @@ const STATUS_MS = 5000;
 const READOUT_MS = 100;
 /** Settings are written to localStorage at most this often. */
 const PERSIST_MS = 300;
+/** Frames a remote calibration pattern stays on screen before it counts as shown. */
+const PATTERN_FRAMES = 2;
+/** Default distance of the line from the camera field's edges in `fitToCameraField`, px. */
+const FIT_MARGIN_PX = 8;
 
 /** Where the controls are shown; see {@link LaserlineStore.controls}. */
 export type ControlsPlacement = 'docked' | 'detached' | 'hidden';
@@ -149,6 +159,19 @@ export class LaserlineStore implements OnDestroy {
   readonly controlsWindow = signal<Window | undefined>(undefined);
   /** A slicing worker is configured. */
   readonly canSlice = !!this.config.createWorker;
+  /** Other pages may drive the line (`LaserlineConfig.remote`). */
+  readonly remoteEnabled = !!this.config.remote;
+  /**
+   * Another page is calibrating a camera against the line: the view shows its patterns
+   * while the parameters stay as they are, and come back when it ends.
+   */
+  readonly calibrating = signal(false);
+  /** The part of the live view (view px) a calibrated camera sees, if one was reported. */
+  readonly cameraField = signal<ViewPoint[] | undefined>(undefined);
+  /** Name of the camera whose field `cameraField` is. */
+  readonly cameraFieldLabel = signal<string | undefined>(undefined);
+  /** Draw the camera field's outline over the live view. */
+  readonly showCameraField = signal(true);
 
   private emu?: Emulator;
   private slicerCore?: Slicer;
@@ -158,6 +181,11 @@ export class LaserlineStore implements OnDestroy {
   private readonly laserViews = new Set<LaserViewEntry>();
   private readonly meshViews = new Set<MeshViewEntry>();
   private detached?: DetachedLaserView;
+  private remote?: RemoteHost;
+  /** The user's parameters as a calibration line, while `calibrating`. */
+  private calibrationBase?: FullLaserParams;
+  private pendingPattern?: { rendered: () => void; frames: number };
+  private viewPx: ViewPoint = [0, 0];
   private readonly syncWindows = () => {
     const popup = this.detached;
     // A hidden window gets no animation frames: follow one being looked at, preferring
@@ -193,6 +221,7 @@ export class LaserlineStore implements OnDestroy {
   ngOnDestroy(): void {
     document.removeEventListener('fullscreenchange', this.syncWindows);
     document.removeEventListener('visibilitychange', this.syncWindows);
+    this.remote?.close();
     this.dockView();
     this.dockSlicer();
     this.closeControlsWindow();
@@ -227,6 +256,24 @@ export class LaserlineStore implements OnDestroy {
     this.sliceSettings.set(this.slicerCore.settings as FullSliceSettings);
     this.sliceAuto.set(this.slicerCore.auto);
     this.presets.set(builtinPresets());
+    const field = stored<{ polygon: ViewPoint[]; label: string | null }>('camera_field');
+    if (field?.polygon?.length) {
+      this.cameraField.set(field.polygon);
+      this.cameraFieldLabel.set(field.label ?? undefined);
+    }
+    if (this.config.remote) {
+      this.remote = new RemoteHost(
+        {
+          status: () => this.remoteStatus(),
+          begin: () => this.beginCalibration(),
+          show: (pattern, rendered) => this.showPattern(pattern, rendered),
+          end: () => this.endCalibration(),
+          setField: (polygon, label) => this.setCameraField(polygon, label),
+          fitToField: (margin) => (this.cameraField() ? this.fitToCameraField(margin) : undefined),
+        },
+        this.config.remote === true ? {} : this.config.remote,
+      );
+    }
     if (this.config.createWorker) {
       this.client = new SliceWorkerClient(this.config.createWorker, this.config.wasmUrl);
       this.runner = new SliceRunner(this.slicerCore, this.client, (scan) => this.showScan(scan));
@@ -257,6 +304,14 @@ export class LaserlineStore implements OnDestroy {
       live ??= view.render(emu) as FullLiveInfo;
       afterRender?.();
     }
+    if (live) {
+      this.viewPx = [live.view_px[0], live.view_px[1]];
+      const pending = this.pendingPattern;
+      if (pending && --pending.frames <= 0) {
+        this.pendingPattern = undefined;
+        pending.rendered();
+      }
+    }
     for (const { view, onLabels, afterRender } of this.meshViews) {
       onLabels(view.render(this.slicerCore!, emu));
       afterRender?.();
@@ -268,6 +323,7 @@ export class LaserlineStore implements OnDestroy {
       this.fps.set(emu.fps);
       if (live && !sameLive(live, this.live())) this.live.set(live);
       this.refreshSlicer();
+      this.remote?.postStatus();
     }
   }
 
@@ -333,6 +389,7 @@ export class LaserlineStore implements OnDestroy {
     this.detached = view;
     this.viewDetached.set(true);
     this.syncWindows();
+    this.syncOverlay();
     view.ready.then(
       () => {
         if (this.detached === view) this.backend.set(view.backend);
@@ -553,7 +610,8 @@ export class LaserlineStore implements OnDestroy {
 
   /** Replaces all line parameters and persists them. */
   setParams(params: FullLaserParams): void {
-    this.emu!.params = params;
+    // A calibration owns the view; the parameters apply when it ends.
+    if (!this.calibrating()) this.emu!.params = params;
     this.params.set(params);
     this.schedulePersist();
   }
@@ -570,7 +628,7 @@ export class LaserlineStore implements OnDestroy {
 
   /** Pauses (false) or resumes (true) the simulation. */
   setPlaying(playing: boolean): void {
-    this.emu!.playing = playing;
+    if (!this.calibrating()) this.emu!.playing = playing;
     this.playing.set(playing);
   }
 
@@ -717,6 +775,88 @@ export class LaserlineStore implements OnDestroy {
   sliceNow(): void {
     this.runner?.sliceNow();
     this.refreshSlicer();
+  }
+
+  // ---- camera calibration (remote)
+
+  /**
+   * Moves the line into the middle of the camera field and shrinks its length and motion
+   * where needed, so it stays `margin` px inside the field everywhere. Returns whether it
+   * fits; deformation and scan heights are not changed and may still be too large.
+   */
+  fitToCameraField(margin = FIT_MARGIN_PX): boolean {
+    const field = this.cameraField();
+    const [w, h] = this.viewPx;
+    if (!field || !this.emu || w <= 0 || h <= 0) return false;
+    const fit = this.emu.fitInto(this.params(), field, w, h, margin);
+    this.setParams(fit.params as FullLaserParams);
+    this.setStatus(fit.fits ? 'Line fitted into the camera field' : 'The deformation or scan is too high for the camera field');
+    return fit.fits;
+  }
+
+  /** Shows (or with `undefined`, removes) the camera field outline and keeps it. */
+  setCameraField(polygon: ViewPoint[] | null | undefined, label?: string | null): void {
+    this.cameraField.set(polygon?.length ? polygon : undefined);
+    this.cameraFieldLabel.set(polygon?.length ? (label ?? undefined) : undefined);
+    this.syncOverlay();
+    const prefix = this.storagePrefix();
+    if (prefix === null) return;
+    try {
+      if (polygon?.length) localStorage.setItem(prefix + 'camera_field', JSON.stringify({ polygon, label: label ?? null }));
+      else localStorage.removeItem(prefix + 'camera_field');
+    } catch {
+      // Not kept; the controller can send it again.
+    }
+  }
+
+  /** Shows or hides the camera field outline. */
+  setShowCameraField(show: boolean): void {
+    this.showCameraField.set(show);
+    this.syncOverlay();
+  }
+
+  private remoteStatus(): Omit<RemoteStatus, 'session'> {
+    const [w, h] = this.viewPx;
+    const ready = !!this.emu && w > 0 && h > 0;
+    return {
+      viewPx: [w, h],
+      envelope: ready ? this.emu!.envelope(this.params(), w, h) : null,
+      field: this.cameraField() ?? null,
+    };
+  }
+
+  private beginCalibration(): void {
+    const emu = this.emu!;
+    this.calibrating.set(true);
+    this.calibrationBase = calibrationParams(this.params()) as FullLaserParams;
+    emu.params = patternParams(this.calibrationBase, { kind: 'blank' });
+    emu.playing = false;
+    this.syncOverlay();
+  }
+
+  private showPattern(pattern: Pattern, rendered: () => void): void {
+    if (!this.calibrationBase) return;
+    this.emu!.params = patternParams(this.calibrationBase, pattern);
+    // A view that has not drawn yet still counts down once it does.
+    this.pendingPattern = { rendered, frames: PATTERN_FRAMES };
+  }
+
+  private endCalibration(): void {
+    this.pendingPattern = undefined;
+    this.calibrationBase = undefined;
+    this.calibrating.set(false);
+    this.emu!.params = this.params();
+    this.emu!.playing = this.playing();
+    this.syncOverlay();
+  }
+
+  /** The detached view draws the outline itself; `<ll-laser-canvas>` reads the signals. */
+  private syncOverlay(): void {
+    const field = this.cameraField();
+    this.detached?.setOverlay(
+      field && this.showCameraField() && !this.calibrating() ? field : undefined,
+      this.cameraFieldLabel(),
+    );
   }
 
   // ---- status and persistence

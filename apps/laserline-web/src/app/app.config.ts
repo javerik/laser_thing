@@ -10,6 +10,8 @@ export const appConfig: ApplicationConfig = {
       createWorker: () => new Worker(new URL('./slice.worker', import.meta.url), { type: 'module' }),
       // ?backend=webgl forces WebGL2, ?backend=webgpu WebGPU.
       backend: (new URLSearchParams(location.search).get('backend') as 'webgl' | 'webgpu' | null) ?? 'auto',
+      // Lets a camera application of this origin (e.g. RACS) calibrate against the line.
+      remote: true,
     }),
   ],
 };
