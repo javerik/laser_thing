@@ -147,6 +147,23 @@ impl Emulator {
         let fit = calibration::fit_into(&params, &field, [view_w, view_h], margin, self.inner.scan.as_deref());
         Ok(to_js(&fit))
     }
+
+    /// `params` changed as little as needed so the line's envelope stays inside the convex
+    /// `area` (view px corners): moved towards its middle only as far as needed, then its
+    /// length and motion (and last its deformation and scan heights) shrunk. `clamped` names
+    /// what changed; nothing does when the line is inside already.
+    #[wasm_bindgen(js_name = constrainInto, unchecked_return_type = "Constrained")]
+    pub fn constrain_into(
+        &self,
+        #[wasm_bindgen(unchecked_param_type = "LaserParams")] params: JsValue,
+        #[wasm_bindgen(unchecked_param_type = "[number, number][]")] area: JsValue,
+        #[wasm_bindgen(js_name = viewW)] view_w: f32,
+        #[wasm_bindgen(js_name = viewH)] view_h: f32,
+    ) -> Result<JsValue, JsError> {
+        let params = from_js(params)?;
+        let area: Vec<[f32; 2]> = from_js(area)?;
+        Ok(to_js(&calibration::constrain_into(&params, &area, [view_w, view_h], self.inner.scan.as_deref())))
+    }
 }
 
 #[derive(Serialize)]

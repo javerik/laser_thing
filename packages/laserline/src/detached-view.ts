@@ -36,6 +36,8 @@ const STYLE = `
   svg { position: fixed; inset: 0; width: 100vw; height: 100vh; pointer-events: none; }
   svg polygon { fill: none; stroke: #e8b44a; stroke-width: 1.5; stroke-dasharray: 6 4; vector-effect: non-scaling-stroke; }
   svg text { fill: #e8b44a; font: 12px system-ui, sans-serif; }
+  svg.limit polygon { stroke: #8a9099; stroke-dasharray: none; }
+  svg.limit text { fill: #8a9099; }
   :root:fullscreen button { display: none; }
   :root:fullscreen canvas { cursor: none; }
 `;
@@ -57,6 +59,7 @@ export class DetachedLaserView {
   private closed = false;
   private readonly bridge: CanvasBridge;
   private overlay?: SVGSVGElement;
+  private limit?: SVGSVGElement;
   private patternCanvas?: HTMLCanvasElement;
 
   private constructor(
@@ -180,11 +183,25 @@ export class DetachedLaserView {
   setOverlay(polygon: [number, number][] | undefined, label?: string): void {
     if (this.closed || this.win.closed) return;
     this.overlay?.remove();
-    this.overlay = undefined;
-    if (!polygon?.length) return;
+    this.overlay = this.outline(polygon, label);
+  }
+
+  /**
+   * Outlines the area the line is kept in (view px, see `RemoteTarget.constrain`) with an
+   * optional `label`, drawn solid and grey; `undefined` removes it.
+   */
+  setLimit(polygon: [number, number][] | undefined, label?: string): void {
+    if (this.closed || this.win.closed) return;
+    this.limit?.remove();
+    this.limit = this.outline(polygon, label, 'limit');
+  }
+
+  private outline(polygon: [number, number][] | undefined, label?: string, cls?: string): SVGSVGElement | undefined {
+    if (!polygon?.length) return undefined;
     const doc = this.win.document;
     const ns = 'http://www.w3.org/2000/svg';
     const svg = doc.createElementNS(ns, 'svg');
+    if (cls) svg.setAttribute('class', cls);
     const [w, h] = this.measure();
     svg.setAttribute('viewBox', `0 0 ${w} ${h}`);
     svg.setAttribute('preserveAspectRatio', 'none');
@@ -200,7 +217,7 @@ export class DetachedLaserView {
       svg.append(text);
     }
     doc.body.append(svg);
-    this.overlay = svg;
+    return svg;
   }
 
   /**

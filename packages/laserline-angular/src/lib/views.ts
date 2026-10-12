@@ -12,9 +12,9 @@ import {
   signal,
   viewChild,
 } from '@angular/core';
-import { CanvasBridge, LaserView, MeshView, drawOverlayPattern, type Scan, type ViewLabel } from '@javerik/laserline';
+import { CanvasBridge, LaserView, MeshView, drawOverlayPattern, type Scan, type ViewLabel, type ViewPoint } from '@javerik/laserline';
 import { LASERLINE_CONFIG } from './config';
-import { LaserlineStore } from './store';
+import { LaserlineStore, limitLabel } from './store';
 import { THEME } from './widgets';
 
 /** The window showing `el` (this one, or a popup the element was moved into). */
@@ -93,8 +93,8 @@ function bindView<V extends { free(): void; resize(w: number, h: number): void }
   template: `
     <canvas #canvas (dblclick)="activate.emit()"></canvas>
     <canvas #pattern class="pattern" [hidden]="!store.overlayPattern()"></canvas>
-    @if (field(); as f) {
-      <svg class="field" [attr.viewBox]="f.viewBox" preserveAspectRatio="none" aria-hidden="true">
+    @for (f of outlines(); track f.kind) {
+      <svg class="field" [class.limit]="f.kind === 'limit'" [attr.viewBox]="f.viewBox" preserveAspectRatio="none" aria-hidden="true">
         <polygon [attr.points]="f.points" />
         @if (f.label) {
           <text [attr.x]="f.labelAt[0]" [attr.y]="f.labelAt[1]">{{ f.label }}</text>
@@ -116,6 +116,8 @@ function bindView<V extends { free(): void; resize(w: number, h: number): void }
       .pattern[hidden] { display: none; }
       .field polygon { fill: none; stroke: var(--_warn); stroke-width: 1.5; stroke-dasharray: 6 4; vector-effect: non-scaling-stroke; }
       .field text { fill: var(--_warn); font-size: 12px; }
+      .field.limit polygon { stroke: var(--_weak); stroke-dasharray: none; }
+      .field.limit text { fill: var(--_weak); }
     `,
   ],
 })
@@ -126,18 +128,22 @@ export class LlLaserCanvas {
   protected readonly error = signal<string | undefined>(undefined);
   protected readonly store = inject(LaserlineStore);
   private readonly patternCanvas = viewChild.required<ElementRef<HTMLCanvasElement>>('pattern');
-  /** The camera field's outline, in the drawing buffer's pixels; hidden while calibrating. */
-  protected readonly field = computed(() => {
-    const polygon = this.store.cameraField();
+  /**
+   * The camera field's outline (dashed) and the limit's (solid), in the drawing buffer's
+   * pixels; hidden while calibrating.
+   */
+  protected readonly outlines = computed(() => {
     const [w, h] = this.store.live().view_px;
-    if (!polygon || !this.store.showCameraField() || this.store.calibrating() || w <= 0 || h <= 0) return undefined;
-    const top = polygon.reduce((a, p) => (p[1] < a[1] || (p[1] === a[1] && p[0] < a[0]) ? p : a));
-    return {
-      viewBox: `0 0 ${w} ${h}`,
-      points: polygon.map((p) => p.join(',')).join(' '),
-      label: this.store.cameraFieldLabel(),
-      labelAt: [top[0] + 6, top[1] + 16],
+    if (!this.store.showCameraField() || this.store.calibrating() || w <= 0 || h <= 0) return [];
+    const outline = (kind: 'field' | 'limit', polygon: ViewPoint[] | undefined, label: string | undefined) => {
+      if (!polygon?.length) return [];
+      const top = polygon.reduce((a, p) => (p[1] < a[1] || (p[1] === a[1] && p[0] < a[0]) ? p : a));
+      return [{ kind, viewBox: `0 0 ${w} ${h}`, points: polygon.map((p) => p.join(',')).join(' '), label, labelAt: [top[0] + 6, top[1] + 16] }];
     };
+    return [
+      ...outline('field', this.store.cameraField(), this.store.cameraFieldLabel()),
+      ...outline('limit', this.store.constraint(), limitLabel(this.store.constraintLabel())),
+    ];
   });
 
   constructor() {

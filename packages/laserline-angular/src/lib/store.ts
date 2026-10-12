@@ -172,8 +172,17 @@ export class LaserlineStore implements OnDestroy {
   readonly cameraField = signal<ViewPoint[] | undefined>(undefined);
   /** Name of the camera whose field `cameraField` is. */
   readonly cameraFieldLabel = signal<string | undefined>(undefined);
-  /** Draw the camera field's outline over the live view. */
+  /** Draw the camera field's outline (and the limit's) over the live view. */
   readonly showCameraField = signal(true);
+  /**
+   * The area (view px) a controller keeps the line in (`RemoteTarget.constrain`): every
+   * parameter change is adjusted to stay inside it, so controls stop at its edges.
+   */
+  readonly constraint = signal<ViewPoint[] | undefined>(undefined);
+  /** Who set `constraint`. */
+  readonly constraintLabel = signal<string | undefined>(undefined);
+  /** What the last parameter change had to give up to stay inside `constraint`. */
+  readonly clamped = signal<string[]>([]);
   /** A calibration pattern drawn over the live view (white, or Gray-code stripes), while one is shown. */
   readonly overlayPattern = signal<OverlayPattern | undefined>(undefined);
 
@@ -265,6 +274,12 @@ export class LaserlineStore implements OnDestroy {
       this.cameraField.set(field.polygon);
       this.cameraFieldLabel.set(field.label ?? undefined);
     }
+    // Applied once the view has a size (see `frame`).
+    const limit = stored<{ polygon: ViewPoint[]; label: string | null }>('constraint');
+    if (limit?.polygon?.length) {
+      this.constraint.set(limit.polygon);
+      this.constraintLabel.set(limit.label ?? undefined);
+    }
     if (this.config.remote) {
       this.remote = new RemoteHost(
         {
@@ -274,6 +289,7 @@ export class LaserlineStore implements OnDestroy {
           end: () => this.endCalibration(),
           setField: (polygon, label) => this.setCameraField(polygon, label),
           fitToField: (margin) => (this.cameraField() ? this.fitToCameraField(margin) : undefined),
+          constrain: (polygon, label) => this.setConstraint(polygon, label),
         },
         this.config.remote === true ? {} : this.config.remote,
       );
@@ -309,7 +325,10 @@ export class LaserlineStore implements OnDestroy {
       afterRender?.();
     }
     if (live) {
+      const resized = live.view_px[0] !== this.viewPx[0] || live.view_px[1] !== this.viewPx[1];
       this.viewPx = [live.view_px[0], live.view_px[1]];
+      // The limit is in view px: apply it once the view has a size, and again when it changes.
+      if (resized && this.constraint()) this.setParams(this.params());
       const pending = this.pendingPattern;
       if (pending && --pending.frames <= 0) {
         this.pendingPattern = undefined;
@@ -612,8 +631,9 @@ export class LaserlineStore implements OnDestroy {
 
   // ---- parameters and playback
 
-  /** Replaces all line parameters and persists them. */
+  /** Replaces all line parameters (kept inside `constraint`, if any) and persists them. */
   setParams(params: FullLaserParams): void {
+    params = this.constrained(params);
     // A calibration owns the view; the parameters apply when it ends.
     if (!this.calibrating()) this.emu!.params = params;
     this.params.set(params);
@@ -813,6 +833,46 @@ export class LaserlineStore implements OnDestroy {
     }
   }
 
+  /**
+   * Keeps the line inside the convex `polygon` (view px) from now on, or with `null` lets it
+   * go; keeps the limit across reloads. Returns what the current parameters had to give up.
+   */
+  setConstraint(polygon: ViewPoint[] | null | undefined, label?: string | null): string[] {
+    const area = polygon?.length ? polygon : undefined;
+    this.constraint.set(area);
+    this.constraintLabel.set(area ? (label ?? undefined) : undefined);
+    this.clamped.set([]);
+    this.syncOverlay();
+    const prefix = this.storagePrefix();
+    if (prefix !== null) {
+      try {
+        if (area) localStorage.setItem(prefix + 'constraint', JSON.stringify({ polygon: area, label: label ?? null }));
+        else localStorage.removeItem(prefix + 'constraint');
+      } catch {
+        // Not kept; the controller can send it again.
+      }
+    }
+    if (!area) {
+      this.setStatus('The line is free again');
+      return [];
+    }
+    if (this.ready()) this.setParams(this.params());
+    return this.clamped();
+  }
+
+  /** `params` adjusted to keep the line inside `constraint`; as they are without one or before the view has a size. */
+  private constrained(params: FullLaserParams): FullLaserParams {
+    const area = this.constraint();
+    const [w, h] = this.viewPx;
+    if (!area || !this.emu || w <= 0 || h <= 0) return params;
+    const c = this.emu.constrainInto(params, area, w, h);
+    this.clamped.set(c.clamped);
+    if (!c.clamped.length) return params;
+    const who = this.constraintLabel() ? ` (${this.constraintLabel()})` : '';
+    this.setStatus(c.fits ? `Kept inside the limit${who}: ${c.clamped.join(', ')}` : `The line is too wide for the limit${who}`);
+    return c.params as FullLaserParams;
+  }
+
   /** Shows or hides the camera field outline. */
   setShowCameraField(show: boolean): void {
     this.showCameraField.set(show);
@@ -826,6 +886,7 @@ export class LaserlineStore implements OnDestroy {
       viewPx: [w, h],
       envelope: ready ? this.emu!.envelope(this.params(), w, h) : null,
       field: this.cameraField() ?? null,
+      constraint: this.constraint() ?? null,
     };
   }
 
@@ -867,10 +928,10 @@ export class LaserlineStore implements OnDestroy {
   /** The detached view draws the outline itself; `<ll-laser-canvas>` reads the signals. */
   private syncOverlay(): void {
     const field = this.cameraField();
-    this.detached?.setOverlay(
-      field && this.showCameraField() && !this.calibrating() ? field : undefined,
-      this.cameraFieldLabel(),
-    );
+    const limit = this.constraint();
+    const shown = this.showCameraField() && !this.calibrating();
+    this.detached?.setOverlay(shown ? field : undefined, this.cameraFieldLabel());
+    this.detached?.setLimit(shown ? limit : undefined, limitLabel(this.constraintLabel()));
   }
 
   // ---- status and persistence
@@ -920,4 +981,9 @@ function forwardKey(e: KeyboardEvent): void {
 
 function sameLive(a: FullLiveInfo, b: FullLiveInfo): boolean {
   return JSON.stringify(a) === JSON.stringify(b);
+}
+
+/** The label drawn on the limit's outline. */
+export function limitLabel(who: string | undefined): string {
+  return who ? `limit · ${who}` : 'limit';
 }

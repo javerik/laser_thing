@@ -6,13 +6,15 @@
 //!   known positions, for measuring how view pixels map onto the camera's sensor.
 //! - [`fit_into`]: shrinks and recentres the line so its envelope lies inside the part
 //!   of the view a camera sees.
+//! - [`constrain_into`]: changes the line as little as needed to keep its envelope inside an
+//!   area, for a controller that limits where the line may go.
 //!
 //! All coordinates are view pixels (the canvas' drawing buffer, y down).
 
 use crate::model;
 use crate::params::{
-    ColorMode, DeformKind, DeformParams, LaserParams, LengthUnit, MotionKind, MotionParams,
-    Orientation, ProfileKind, ScanScale,
+    ColorMode, DeformKind, DeformParams, HeightGain, LaserParams, LengthUnit, MotionKind,
+    MotionParams, Orientation, ProfileKind, ScanScale,
 };
 use crate::scan::{self, Scan};
 use serde::{Deserialize, Serialize};
@@ -212,16 +214,7 @@ pub fn fit_into(params: &LaserParams, field: &[[f32; 2]], view_px: [f32; 2], mar
     }
     let target = centroid(field);
     let at_scale = |s: f32| {
-        let mut p = scaled(params, s);
-        // Put the envelope's middle (not the resting center) on the field's middle.
-        let e = line_envelope(&p, view_px, scan);
-        let mid_along = 0.5 * (e.along_px[0] + e.along_px[1]);
-        let mid_across = 0.5 * (e.across_px[0] + e.across_px[1]);
-        let center = [
-            target[0] - e.dir[0] * mid_along - e.normal[0] * mid_across,
-            target[1] - e.dir[1] * mid_along - e.normal[1] * mid_across,
-        ];
-        p.line.position_pct = [center[0] / view_px[0] * 100.0, center[1] / view_px[1] * 100.0];
+        let p = centered(&scaled(params, s), target, view_px, scan);
         let fits = line_envelope(&p, view_px, scan).inside(field, margin);
         (p, fits)
     };
@@ -239,6 +232,154 @@ pub fn fit_into(params: &LaserParams, field: &[[f32; 2]], view_px: [f32; 2], mar
         if at_scale(mid).1 { lo = mid } else { hi = mid }
     }
     Fit { params: at_scale(lo).0, fits: true }
+}
+
+/// `p` with the line placed so its envelope's middle (not its resting center) is on `target`.
+fn centered(p: &LaserParams, target: [f32; 2], view_px: [f32; 2], scan: Option<&Scan>) -> LaserParams {
+    let mut p = p.clone();
+    let e = line_envelope(&p, view_px, scan);
+    let mid_along = 0.5 * (e.along_px[0] + e.along_px[1]);
+    let mid_across = 0.5 * (e.across_px[0] + e.across_px[1]);
+    let center = [
+        target[0] - e.dir[0] * mid_along - e.normal[0] * mid_across,
+        target[1] - e.dir[1] * mid_along - e.normal[1] * mid_across,
+    ];
+    p.line.position_pct = [center[0] / view_px[0] * 100.0, center[1] / view_px[1] * 100.0];
+    p
+}
+
+/// Result of [`constrain_into`].
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "wasm", derive(tsify::Tsify))]
+pub struct Constrained {
+    /// The adjusted parameters; the given ones when the line already stays inside.
+    pub params: LaserParams,
+    /// The envelope now lies inside the area. False only when the line's width alone is
+    /// too large for it, or the area is empty.
+    pub fits: bool,
+    /// What had to change, in words: `position`, `length`, `movement`, `deformation`,
+    /// `scan scale`, `scan height`. Empty when nothing did.
+    pub clamped: Vec<String>,
+}
+
+/// `params` changed as little as needed so the line's whole envelope stays inside the
+/// convex `area` (view px):
+///
+/// 1. unchanged when it already does;
+/// 2. else the line keeps its size if it fits in the area's middle, and moves from where it
+///    is towards there only as far as needed;
+/// 3. else its length and motion shrink first, then (if even no length and motion don't fit)
+///    its deformation and scan heights with them, to the largest size that fits; it then
+///    moves as in 2.
+///
+/// Meant to run on every parameter change while a controller limits the line, so a
+/// control pushed past a limit stops at it.
+pub fn constrain_into(params: &LaserParams, area: &[[f32; 2]], view_px: [f32; 2], scan: Option<&Scan>) -> Constrained {
+    let unchanged = |fits| Constrained { params: params.clone(), fits, clamped: Vec::new() };
+    if area.len() < 3 || view_px[0] <= 0.0 || view_px[1] <= 0.0 {
+        return unchanged(false);
+    }
+    let fits = |p: &LaserParams| line_envelope(p, view_px, scan).inside(area, 0.0);
+    if fits(params) {
+        return unchanged(true);
+    }
+    let target = centroid(area);
+    let fits_centered = |p: &LaserParams| fits(&centered(p, target, view_px, scan));
+
+    // The largest size that fits in the middle: the envelope shrinks monotonically with each scale.
+    let largest = |make: &dyn Fn(f32) -> LaserParams| {
+        let (mut lo, mut hi) = (0.0f32, 1.0f32);
+        for _ in 0..30 {
+            let mid = 0.5 * (lo + hi);
+            if fits_centered(&make(mid)) { lo = mid } else { hi = mid }
+        }
+        make(lo)
+    };
+    let (sized, all_fit) = if fits_centered(params) {
+        (params.clone(), true)
+    } else if fits_centered(&scaled(params, 0.0)) {
+        (largest(&|s| scaled(params, s)), true)
+    } else if fits_centered(&scaled_shape(&scaled(params, 0.0), 0.0)) {
+        (largest(&|s| scaled_shape(&scaled(params, s), s)), true)
+    } else {
+        (scaled_shape(&scaled(params, 0.0), 0.0), false)
+    };
+
+    // From where the line is towards the middle: the positions that fit form an interval
+    // ending at the middle (the area is convex), so bisect for its start.
+    let from = sized.line.position_pct;
+    let to = centered(&sized, target, view_px, scan).line.position_pct;
+    let at = |t: f32| {
+        let mut p = sized.clone();
+        p.line.position_pct = [from[0] + t * (to[0] - from[0]), from[1] + t * (to[1] - from[1])];
+        p
+    };
+    let result = if !all_fit {
+        at(1.0)
+    } else if fits(&at(0.0)) {
+        at(0.0)
+    } else {
+        let (mut lo, mut hi) = (0.0f32, 1.0f32);
+        for _ in 0..30 {
+            let mid = 0.5 * (lo + hi);
+            if fits(&at(mid)) { hi = mid } else { lo = mid }
+        }
+        at(hi)
+    };
+    let fits = all_fit && fits(&result);
+    let result = keep_inactive(params, result);
+    Constrained { clamped: changes(params, &result), params: result, fits }
+}
+
+/// `result` with the settings the line doesn't use now (another motion or deformation kind,
+/// a disabled scan) put back as in `original`: shrinking them limits nothing and would
+/// surprise the user switching to them later.
+fn keep_inactive(original: &LaserParams, mut result: LaserParams) -> LaserParams {
+    if result.motion.kind != MotionKind::Sweep {
+        result.motion.span_pct = original.motion.span_pct;
+    }
+    if result.motion.kind != MotionKind::Sine {
+        result.motion.amplitude_px = original.motion.amplitude_px;
+    }
+    if !matches!(result.deform.kind, DeformKind::Step | DeformKind::Bump | DeformKind::Box) {
+        result.deform.height_px = original.deform.height_px;
+    }
+    if result.deform.kind != DeformKind::Sine {
+        result.deform.amplitude_px = original.deform.amplitude_px;
+    }
+    if !result.scan.enabled {
+        result.scan.px_per_mm = original.scan.px_per_mm;
+        result.scan.height_px_per_mm = original.scan.height_px_per_mm;
+    }
+    result
+}
+
+/// What differs between `a` and `b` among what [`constrain_into`] changes.
+fn changes(a: &LaserParams, b: &LaserParams) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut note = |changed: bool, what: &str| {
+        if changed {
+            out.push(what.to_string());
+        }
+    };
+    note(a.line.position_pct != b.line.position_pct, "position");
+    note(a.line.length != b.line.length, "length");
+    note(a.motion.span_pct != b.motion.span_pct || a.motion.amplitude_px != b.motion.amplitude_px, "movement");
+    note(a.deform.height_px != b.deform.height_px || a.deform.amplitude_px != b.deform.amplitude_px, "deformation");
+    note(a.scan.px_per_mm != b.scan.px_per_mm, "scan scale");
+    note(a.scan.height_px_per_mm != b.scan.height_px_per_mm, "scan height");
+    out
+}
+
+/// `p` with the deformation and (where set by hand) the scan's height gain times `s`.
+fn scaled_shape(p: &LaserParams, s: f32) -> LaserParams {
+    let mut p = p.clone();
+    p.deform.height_px *= s;
+    p.deform.amplitude_px *= s;
+    if p.scan.height_gain == HeightGain::Manual {
+        p.scan.height_px_per_mm *= s;
+    }
+    p
 }
 
 /// `p` with the line length and motion range times `s`.
@@ -498,5 +639,77 @@ mod tests {
         let fit = fit_into(&p, &rect(0.0, 100.0, 1000.0, 300.0), VIEW, 0.0, None);
         assert!(!fit.fits);
         assert!(!fit_into(&p, &[[0.0, 0.0], [1.0, 1.0]], VIEW, 0.0, None).fits);
+    }
+    #[test]
+    fn constrain_keeps_a_line_inside_the_area() {
+        let p = LaserParams::default();
+        let c = constrain_into(&p, &rect(0.0, 0.0, 1000.0, 500.0), VIEW, None);
+        assert!(c.fits);
+        assert!(c.clamped.is_empty());
+        assert_eq!(c.params, p);
+    }
+
+    #[test]
+    fn constrain_moves_the_line_only_as_far_as_needed() {
+        let mut p = LaserParams::default();
+        p.profile.end_softness_px = 0.0;
+        p.line.length_unit = LengthUnit::Pixels;
+        p.line.length = 200.0;
+        p.line.position_pct = [30.0, 50.0];
+        // The line spans x 200..400; the area starts at 350.
+        let area = rect(350.0, 100.0, 900.0, 400.0);
+        let c = constrain_into(&p, &area, VIEW, None);
+        assert!(c.fits);
+        assert_eq!(c.clamped, vec!["position".to_string()]);
+        let e = line_envelope(&c.params, VIEW, None);
+        assert!(e.inside(&area, -1e-2));
+        assert!((e.center_px[0] - 450.0).abs() < 0.5, "{:?}", e.center_px);
+        assert_eq!(c.params.line.length, 200.0);
+        // A constrained line stays as it is.
+        let again = constrain_into(&c.params, &area, VIEW, None);
+        assert!(again.clamped.is_empty());
+    }
+
+    #[test]
+    fn constrain_shrinks_length_and_motion_before_the_shape() {
+        let mut p = LaserParams::default();
+        p.profile.end_softness_px = 0.0;
+        p.motion = MotionParams { kind: MotionKind::Sine, amplitude_px: 100.0, ..Default::default() };
+        p.deform = DeformParams { kind: DeformKind::Step, height_px: -20.0, ..Default::default() };
+        let area = rect(400.0, 100.0, 700.0, 300.0);
+        let c = constrain_into(&p, &area, VIEW, None);
+        assert!(c.fits);
+        assert!(line_envelope(&c.params, VIEW, None).inside(&area, -1e-2));
+        assert!(c.clamped.contains(&"length".to_string()));
+        assert!(c.clamped.contains(&"movement".to_string()));
+        assert!(!c.clamped.contains(&"deformation".to_string()));
+        assert_eq!(c.params.deform.height_px, -20.0);
+        // Settings the line doesn't use stay as they were.
+        assert_eq!(c.params.motion.span_pct, p.motion.span_pct);
+        let mut still = LaserParams::default();
+        still.profile.end_softness_px = 0.0;
+        let c = constrain_into(&still, &area, VIEW, None);
+        assert_eq!(c.clamped, vec!["position".to_string(), "length".to_string()]);
+        assert_eq!(c.params.motion, still.motion);
+    }
+
+    #[test]
+    fn constrain_shrinks_a_deformation_too_large_for_the_area() {
+        let mut p = LaserParams::default();
+        p.deform = DeformParams { kind: DeformKind::Step, height_px: -300.0, ..Default::default() };
+        let area = rect(0.0, 100.0, 1000.0, 300.0);
+        let c = constrain_into(&p, &area, VIEW, None);
+        assert!(c.fits);
+        assert!(c.clamped.contains(&"deformation".to_string()));
+        assert!(c.params.deform.height_px > -200.0);
+        assert!(line_envelope(&c.params, VIEW, None).inside(&area, -1e-2));
+    }
+
+    #[test]
+    fn constrain_reports_a_line_wider_than_the_area() {
+        let mut p = LaserParams::default();
+        p.line.width_px = 300.0;
+        assert!(!constrain_into(&p, &rect(0.0, 100.0, 1000.0, 300.0), VIEW, None).fits);
+        assert!(!constrain_into(&p, &[[0.0, 0.0], [1.0, 1.0]], VIEW, None).fits);
     }
 }

@@ -39,6 +39,14 @@
   Patterns include bands (`width_pct`), a white view and Gray-code stripes drawn over the view
   (`OverlayPattern`, `drawOverlayPattern`, `stripeLit`, `DetachedLaserView.setPattern`,
   `LaserlineStore.overlayPattern`), so a camera seeing only part of the display can be mapped.
+- A controller can limit where the line goes: `constrain { polygon, label }` (answered with
+  `constrained { clamped }`, released with `null`) keeps the line, its motion, deformation and
+  scan heights inside a convex area. Every parameter change is adjusted as little as needed
+  (moved towards the area's middle, then length and motion shrunk, last the heights), so
+  controls and presets stop at the limit. The limit is kept across reloads, outlined solid over
+  the view and reported in `status.constraint`; *Release limit* lets the line go. Core:
+  `calibration::constrain_into`; JS: `Emulator.constrainInto`, `RemoteTarget.constrain`,
+  `DetachedLaserView.setLimit`, `LaserlineStore.constraint` / `setConstraint()` / `clamped`.
 - The default laser colour is white (`ColorParams` defaults to `Custom` 1,1,1); the coloured
   presets set their wavelength. Calibration lines are white.
 - Every public Rust item and every TypeScript export is documented; `missing_docs` and

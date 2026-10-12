@@ -21,6 +21,8 @@ export interface RemoteStatus {
   session: string | null;
   /** The part of the view a camera sees, as last set by a controller. */
   field: ViewPoint[] | null;
+  /** The area the line is kept in, as last set by a controller (`constrain`). */
+  constraint: ViewPoint[] | null;
 }
 
 /**
@@ -33,13 +35,15 @@ export type ToLaserline =
   | { v: 1; type: 'show'; to: string; session: string; id: number; pattern: RemotePattern }
   | { v: 1; type: 'end'; to: string; session: string }
   | { v: 1; type: 'camera-field'; to: string; polygon: ViewPoint[] | null; label?: string }
-  | { v: 1; type: 'fit-to-field'; to: string; id: number; margin: number };
+  | { v: 1; type: 'fit-to-field'; to: string; id: number; margin: number }
+  | { v: 1; type: 'constrain'; to: string; id: number; polygon: ViewPoint[] | null; label?: string };
 
 /** Messages from a laserline window; `host` identifies it. */
 export type FromLaserline =
   | { v: 1; type: 'status'; host: string; status: RemoteStatus }
   | { v: 1; type: 'shown'; host: string; session: string; id: number; viewPx: ViewPoint }
   | { v: 1; type: 'fitted'; host: string; id: number; fits: boolean }
+  | { v: 1; type: 'constrained'; host: string; id: number; clamped: string[] }
   | { v: 1; type: 'error'; host: string; session?: string; id?: number; message: string };
 
 /** What a {@link RemoteHost} drives: the emulator and its view, e.g. `LaserlineStore`. */
@@ -56,6 +60,11 @@ export interface RemoteTarget {
   setField(polygon: ViewPoint[] | null, label: string | null): void;
   /** Fit the line into the field `margin` px inside its edges; whether it fits, `undefined` without a field. */
   fitToField(margin: number): boolean | undefined;
+  /**
+   * Keep the line inside the convex `polygon` from now on (`null` releases it); returns the
+   * names of the parameters changed to fit (empty when none were, or on release).
+   */
+  constrain(polygon: ViewPoint[] | null, label: string | null): string[];
 }
 
 /** Options of {@link RemoteHost}. */
@@ -77,6 +86,8 @@ export interface RemoteHostOptions {
  *    controller goes quiet for {@link REMOTE_IDLE_MS}.
  * 5. `camera-field` → the window outlines the part of its view the camera sees, and
  *    `fit-to-field` fits the line into it.
+ * 6. `constrain` → the window keeps the line, its motion, deformation and scan heights inside
+ *    an area until released with `null`, answering `constrained` with what it had to change.
  *
  * Only one session runs at a time; a second `begin` gets an `error`.
  */
@@ -172,6 +183,12 @@ export class RemoteHost {
           this.post({ v: 1, type: 'fitted', host: this.id, id: msg.id, fits });
           this.postStatus();
         }
+        break;
+      }
+      case 'constrain': {
+        const clamped = this.target.constrain(msg.polygon?.length ? msg.polygon : null, msg.label ?? null);
+        this.post({ v: 1, type: 'constrained', host: this.id, id: msg.id, clamped });
+        this.postStatus();
         break;
       }
     }

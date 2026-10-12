@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { afterEach, test } from 'node:test';
 import { RemoteHost } from '../dist/remote.js';
 
-const STATUS = { viewPx: [800, 600], envelope: null, field: null };
+const STATUS = { viewPx: [800, 600], envelope: null, field: null, constraint: null };
 
 /** A target recording calls; `show` renders on `flush()`. */
 function fakeTarget() {
@@ -12,8 +12,9 @@ function fakeTarget() {
   return {
     calls,
     field: null,
+    constraint: null,
     status() {
-      return { ...STATUS, field: this.field };
+      return { ...STATUS, field: this.field, constraint: this.constraint };
     },
     begin: () => calls.push('begin'),
     end: () => calls.push('end'),
@@ -24,6 +25,11 @@ function fakeTarget() {
     setField(polygon, label) {
       this.field = polygon;
       calls.push(['field', label]);
+    },
+    constrain(polygon, label) {
+      this.constraint = polygon;
+      calls.push(['constrain', label]);
+      return polygon ? ['length'] : [];
     },
     fitToField(margin) {
       calls.push(['fit', margin]);
@@ -132,4 +138,20 @@ test('camera field and fitting', async () => {
   assert.deepEqual((await c.next('status')).status.field, field);
   c.send({ type: 'fit-to-field', to: h.id, id: 2, margin: 4 });
   assert.deepEqual(await c.next('fitted'), { v: 1, type: 'fitted', host: h.id, id: 2, fits: true });
+});
+
+test('constraining the line and releasing it', async () => {
+  const name = 'remote-test-5';
+  const target = fakeTarget();
+  const h = host(target, { channel: name });
+  const c = controller(name);
+  const area = [[0, 0], [10, 0], [10, 10]];
+  c.send({ type: 'constrain', to: h.id, id: 7, polygon: area, label: 'RACS' });
+  assert.deepEqual(await c.next('constrained'), { v: 1, type: 'constrained', host: h.id, id: 7, clamped: ['length'] });
+  assert.deepEqual((await c.next('status')).status.constraint, area);
+  // An empty polygon releases it like null.
+  c.send({ type: 'constrain', to: h.id, id: 8, polygon: [] });
+  assert.deepEqual((await c.next('constrained')).clamped, []);
+  assert.equal((await c.next('status')).status.constraint, null);
+  assert.deepEqual(target.calls, [['constrain', 'RACS'], ['constrain', null]]);
 });

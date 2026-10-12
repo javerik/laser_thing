@@ -184,8 +184,9 @@ export class LlObjectScan {
 }
 
 /**
- * The camera a remote page calibrated against the line: its field's outline and fitting
- * the line into it. Shows nothing until a field is known or a calibration runs.
+ * The camera a remote page calibrated against the line: its field's outline, fitting the
+ * line into it, and the limit the page keeps the line in. Shows nothing until a field or a
+ * limit is known or a calibration runs.
  */
 @Component({
   selector: 'll-camera-field',
@@ -201,6 +202,21 @@ export class LlObjectScan {
         </button>
         <label class="row"><input type="checkbox" [checked]="store.showCameraField()" (change)="store.setShowCameraField(!store.showCameraField())" /> Outline</label>
         <button type="button" title="Forget the camera field" (click)="store.setCameraField(undefined)">Clear</button>
+      </div>
+    }
+    @if (store.constraint() && !store.calibrating()) {
+      <p class="weak">
+        The line is kept inside the solid outline{{ store.constraintLabel() ? ', set by ' + store.constraintLabel() : '' }}: its position, length,
+        movement and height stop at it.
+      </p>
+      @if (store.clamped().length) {
+        <p class="warn">Held back: {{ store.clamped().join(', ') }}</p>
+      }
+      <div class="row">
+        <button type="button" title="Let the line leave the area again" (click)="store.setConstraint(null)">Release limit</button>
+        @if (!store.cameraField()) {
+          <label class="row"><input type="checkbox" [checked]="store.showCameraField()" (change)="store.setShowCameraField(!store.showCameraField())" /> Outline</label>
+        }
       </div>
     }
   `,
@@ -236,7 +252,7 @@ export class LlCameraField {
       <p class="error">{{ e }}</p>
     } @else if (store.ready()) {
       <ll-transport />
-      @if (store.calibrating() || store.cameraField()) {
+      @if (store.calibrating() || store.cameraField() || store.constraint()) {
         <ll-section heading="Camera" [resettable]="false">
           <ll-camera-field />
         </ll-section>

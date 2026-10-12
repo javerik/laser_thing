@@ -83,7 +83,9 @@ camera against the line (`RemoteHost` in `@javerik/laserline`). While one does,
 `store.calibrating()` is true and parameter edits wait for it to end; afterwards
 `store.cameraField()` holds the part of the view the camera sees, outlined over
 `<ll-laser-canvas>` and the detached view, and `<ll-camera-field>` (inside `<ll-controls>`)
-offers `store.fitToCameraField()`.
+offers `store.fitToCameraField()`. A page can also limit the line to an area
+(`store.constraint()`, set remotely or with `store.setConstraint()`): every parameter change
+is kept inside it (`store.clamped()` says what gave way) until *Release limit*.
 
 Smaller pieces (`ll-laser-canvas`, `ll-line-controls`, `ll-mesh-view`, `ll-range-image`,
 `ll-slider`, …) and the `LaserlineStore` are exported for custom layouts.

@@ -135,6 +135,7 @@ describe('LaserlineStore windows', () => {
         close: vi.fn(),
         toggleFullscreen: vi.fn(),
         setOverlay: vi.fn(),
+        setLimit: vi.fn(),
       };
       vi.spyOn(DetachedLaserView, 'open').mockImplementation((o) => {
         options = o;
@@ -389,6 +390,41 @@ describe('LaserlineStore windows', () => {
       expect(s.params().line.position_pct[0]).toBeCloseTo(55, 1);
       s.setCameraField(undefined);
       expect(localStorage.getItem('test.camera_field')).toBeNull();
+      s.ngOnDestroy();
+    });
+
+    it('keeps the line inside a limit until it is released', async () => {
+      const { s, step, send, next, until } = await remoteStore('spec-remote-4');
+      step();
+      send({ type: 'hello' });
+      const host = (await next('status')).host;
+      const area: [number, number][] = [[400, 100], [700, 100], [700, 300], [400, 300]];
+      send({ type: 'constrain', to: host, id: 6, polygon: area, label: 'RACS · camera #0' });
+      const answer = await next('constrained');
+      expect(answer.clamped).toContain('length');
+      await until(() => !!s.constraint());
+      expect(s.constraintLabel()).toBe('RACS · camera #0');
+      expect(JSON.parse(localStorage.getItem('test.constraint')!).polygon).toEqual(area);
+      const kept = s.params();
+      // A longer line stops at the limit; a change inside it stays as asked.
+      s.patchParams({ line: { ...kept.line, length: kept.line.length * 3 } });
+      expect(s.params().line.length).toBeCloseTo(kept.line.length, 1);
+      expect(s.clamped()).toContain('length');
+      s.patchParams({ line: { ...kept.line, length: kept.line.length / 2 } });
+      expect(s.params().line.length).toBeCloseTo(kept.line.length / 2, 3);
+      expect(s.clamped()).toEqual([]);
+      // Its status carries the limit (older statuses may still be queued).
+      send({ type: 'hello' });
+      let status = await next('status');
+      while (!status.status.constraint) status = await next('status');
+      expect(status.status.constraint).toEqual(area);
+      // Released: the line may grow again.
+      send({ type: 'constrain', to: host, id: 7, polygon: null });
+      expect((await next('constrained')).clamped).toEqual([]);
+      await until(() => !s.constraint());
+      s.patchParams({ line: { ...kept.line, length: kept.line.length * 3 } });
+      expect(s.params().line.length).toBeCloseTo(kept.line.length * 3, 3);
+      expect(localStorage.getItem('test.constraint')).toBeNull();
       s.ngOnDestroy();
     });
   });

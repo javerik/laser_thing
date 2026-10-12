@@ -99,12 +99,13 @@ view's drawing buffer, y down).
 
 | To laserline | Answer |
 |---|---|
-| `hello` | `status` from every window: `host` id, `viewPx`, the user's line `envelope`, `session`, `field` |
+| `hello` | `status` from every window: `host` id, `viewPx`, the user's line `envelope`, `session`, `field`, `constraint` |
 | `begin { to, session }` | `status`; the user's parameters are kept aside, the view goes blank and pauses. A second session gets `error`. |
 | `show { to, session, id, pattern }` | `shown { id, viewPx }` once the pattern has been on screen for a frame: `{ kind: 'blank' }`; `{ kind: 'line', orientation, position_pct, width_pct? }` (a line across the view, or a band `width_pct` of the view wide); `{ kind: 'white' }`; or `{ kind: 'stripes', orientation, bit, inverted? }`, bit `bit` of a Gray code of the view's columns (`Vertical`) or rows, white on black (`stripeLit`, `drawOverlayPattern`). White and stripes are drawn over the view; from all bits a camera pixel decodes the view position it sees |
 | `end { to, session }` | `status`; parameters and playback come back. A session also ends after 15 s without messages. |
 | `camera-field { to, polygon, label }` | `status`; the window outlines the polygon (`null` removes it) |
 | `fit-to-field { to, id, margin }` | `fitted { id, fits }` after moving and shrinking the line into the field |
+| `constrain { to, id, polygon, label? }` | `constrained { id, clamped }`; from now on the line, its motion, deformation and scan heights stay inside the convex polygon (`clamped` names what the current parameters gave up); `null` releases it |
 
 The live view must stay visible: hidden windows get no animation frames, so no `shown`.
 

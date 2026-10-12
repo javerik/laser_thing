@@ -197,5 +197,9 @@ test('calibration helpers', () => {
   const fit = emu.fitInto(p, [[400, 100], [700, 100], [700, 300], [400, 300]], 1000, 500, 10);
   assert.equal(fit.fits, true);
   assert.ok(fit.params.line.length < p.line.length);
+  const kept = emu.constrainInto(p, [[400, 100], [700, 100], [700, 300], [400, 300]], 1000, 500);
+  assert.equal(kept.fits, true);
+  assert.ok(kept.clamped.includes('length'));
+  assert.deepEqual(emu.constrainInto(p, [[0, 0], [1000, 0], [1000, 500], [0, 500]], 1000, 500).clamped, []);
   emu.free();
 });
