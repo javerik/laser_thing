@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { afterEach, test } from 'node:test';
 import { RemoteHost } from '../dist/remote.js';
 
-const STATUS = { viewPx: [800, 600], envelope: null, field: null, constraint: null };
+const STATUS = { viewPx: [800, 600], envelope: null, field: null, constraint: null, tilt_deg: 0 };
 
 /** A target recording calls; `show` renders on `flush()`. */
 function fakeTarget() {
@@ -13,8 +13,14 @@ function fakeTarget() {
     calls,
     field: null,
     constraint: null,
+    tilt: 0,
     status() {
-      return { ...STATUS, field: this.field, constraint: this.constraint };
+      return { ...STATUS, field: this.field, constraint: this.constraint, tilt_deg: this.tilt };
+    },
+    setTilt(deg) {
+      this.tilt = Math.max(-45, Math.min(45, deg));
+      calls.push(['tilt', deg]);
+      return this.tilt;
     },
     begin: () => calls.push('begin'),
     end: () => calls.push('end'),
@@ -154,4 +160,18 @@ test('constraining the line and releasing it', async () => {
   assert.deepEqual((await c.next('constrained')).clamped, []);
   assert.equal((await c.next('status')).status.constraint, null);
   assert.deepEqual(target.calls, [['constrain', 'RACS'], ['constrain', null]]);
+});
+
+test('setting the line tilt', async () => {
+  const name = 'remote-test-6';
+  const target = fakeTarget();
+  const h = host(target, { channel: name });
+  const c = controller(name);
+  c.send({ type: 'tilt', to: h.id, id: 3, tilt_deg: 1.25 });
+  assert.deepEqual(await c.next('tilted'), { v: 1, type: 'tilted', host: h.id, id: 3, tilt_deg: 1.25 });
+  assert.equal((await c.next('status')).status.tilt_deg, 1.25);
+  // The answer reports the tilt kept.
+  c.send({ type: 'tilt', to: h.id, id: 4, tilt_deg: 60 });
+  assert.equal((await c.next('tilted')).tilt_deg, 45);
+  assert.deepEqual(target.calls, [['tilt', 1.25], ['tilt', 60]]);
 });

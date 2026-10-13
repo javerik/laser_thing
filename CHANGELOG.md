@@ -47,6 +47,11 @@
   the view and reported in `status.constraint`; *Release limit* lets the line go. Core:
   `calibration::constrain_into`; JS: `Emulator.constrainInto`, `RemoteTarget.constrain`,
   `DetachedLaserView.setLimit`, `LaserlineStore.constraint` / `setConstraint()` / `clamped`.
+- A controller can tilt the line: `line` patterns take a `tilt_deg` (`Pattern::Line`), so a
+  camera application can find the tilt at which it sees the line level, and
+  `tilt { tilt_deg }` (answered with `tilted { tilt_deg }`, clamped to ±45°) sets the user's
+  line tilt, applied when a running session ends. `status.tilt_deg` reports it. JS:
+  `RemoteTarget.setTilt`, `LaserlineStore.setTilt()`.
 - The default laser colour is white (`ColorParams` defaults to `Custom` 1,1,1); the coloured
   presets set their wavelength. Calibration lines are white.
 - Every public Rust item and every TypeScript export is documented; `missing_docs` and

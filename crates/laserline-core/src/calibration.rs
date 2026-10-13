@@ -143,6 +143,10 @@ pub enum Pattern {
         /// the whole view); the calibration line's width when absent.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         width_pct: Option<f32>,
+        /// Rotation in degrees on top of the orientation, about the line's centre (as
+        /// [`LineParams::tilt_deg`](crate::params::LineParams)); none when absent.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        tilt_deg: Option<f32>,
     },
 }
 
@@ -173,7 +177,7 @@ pub fn pattern_params(base: &LaserParams, pattern: Pattern, view_px: [f32; 2]) -
     let mut p = base.clone();
     match pattern {
         Pattern::Blank => p.line.intensity_pct = 0.0,
-        Pattern::Line { orientation, position_pct, width_pct } => {
+        Pattern::Line { orientation, position_pct, width_pct, tilt_deg } => {
             if let Some(w) = width_pct {
                 let across = match orientation {
                     Orientation::Horizontal => view_px[1],
@@ -182,7 +186,7 @@ pub fn pattern_params(base: &LaserParams, pattern: Pattern, view_px: [f32; 2]) -
                 p.line.width_px = (w / 100.0 * across).max(1.0);
             }
             p.line.orientation = orientation;
-            p.line.tilt_deg = 0.0;
+            p.line.tilt_deg = tilt_deg.unwrap_or(0.0);
             p.line.length = 100.0;
             p.line.length_unit = LengthUnit::Percent;
             p.line.position_pct = match orientation {
@@ -566,28 +570,44 @@ mod tests {
     #[test]
     fn patterns_place_full_lines() {
         let base = calibration_params(&LaserParams::default());
-        let h = pattern_params(&base, Pattern::Line { orientation: Orientation::Horizontal, position_pct: 20.0, width_pct: None }, VIEW);
+        let h = pattern_params(&base, Pattern::Line { orientation: Orientation::Horizontal, position_pct: 20.0, width_pct: None, tilt_deg: None }, VIEW);
         let e = line_envelope(&h, VIEW, None);
         assert!(approx2(e.center_px, [500.0, 100.0]));
         assert!(approx2(e.along_px, [-500.0, 500.0]));
-        let v = pattern_params(&base, Pattern::Line { orientation: Orientation::Vertical, position_pct: 75.0, width_pct: None }, VIEW);
+        let v = pattern_params(&base, Pattern::Line { orientation: Orientation::Vertical, position_pct: 75.0, width_pct: None, tilt_deg: None }, VIEW);
         let e = line_envelope(&v, VIEW, None);
         assert!(approx2(e.center_px, [750.0, 250.0]));
         assert!(approx2(e.along_px, [-250.0, 250.0]));
         assert_eq!(pattern_params(&base, Pattern::Blank, VIEW).line.intensity_pct, 0.0);
         // A band: 10 % of the 1000 px width, and of the 500 px height.
-        let band = |orientation, width_pct| pattern_params(&base, Pattern::Line { orientation, position_pct: 50.0, width_pct: Some(width_pct) }, VIEW);
+        let band = |orientation, width_pct| pattern_params(&base, Pattern::Line { orientation, position_pct: 50.0, width_pct: Some(width_pct), tilt_deg: None }, VIEW);
         assert_eq!(band(Orientation::Vertical, 10.0).line.width_px, 100.0);
         assert_eq!(band(Orientation::Horizontal, 10.0).line.width_px, 50.0);
         assert_eq!(band(Orientation::Horizontal, 100.0).line.width_px, 500.0);
     }
 
     #[test]
+    fn line_patterns_can_be_tilted() {
+        let mut user = LaserParams::default();
+        user.line.tilt_deg = 12.0;
+        let base = calibration_params(&user);
+        let flat = pattern_params(&base, Pattern::Line { orientation: Orientation::Horizontal, position_pct: 40.0, width_pct: None, tilt_deg: None }, VIEW);
+        assert_eq!(flat.line.tilt_deg, 0.0);
+        let t = pattern_params(&base, Pattern::Line { orientation: Orientation::Horizontal, position_pct: 40.0, width_pct: None, tilt_deg: Some(-2.5) }, VIEW);
+        assert_eq!(t.line.tilt_deg, -2.5);
+        let e = line_envelope(&t, VIEW, None);
+        assert!(approx2(e.center_px, [500.0, 200.0]));
+        assert!(approx2(e.dir, [(-2.5f32).to_radians().cos(), (-2.5f32).to_radians().sin()]));
+        let p: Pattern = serde_json::from_str(r#"{"kind":"line","orientation":"Horizontal","position_pct":40,"tilt_deg":-2.5}"#).unwrap();
+        assert_eq!(p, Pattern::Line { orientation: Orientation::Horizontal, position_pct: 40.0, width_pct: None, tilt_deg: Some(-2.5) });
+    }
+
+    #[test]
     fn pattern_json_is_tagged() {
         let p: Pattern = serde_json::from_str(r#"{"kind":"line","orientation":"Vertical","position_pct":30}"#).unwrap();
-        assert_eq!(p, Pattern::Line { orientation: Orientation::Vertical, position_pct: 30.0, width_pct: None });
+        assert_eq!(p, Pattern::Line { orientation: Orientation::Vertical, position_pct: 30.0, width_pct: None, tilt_deg: None });
         let b: Pattern = serde_json::from_str(r#"{"kind":"line","orientation":"Horizontal","position_pct":5,"width_pct":2.5}"#).unwrap();
-        assert_eq!(b, Pattern::Line { orientation: Orientation::Horizontal, position_pct: 5.0, width_pct: Some(2.5) });
+        assert_eq!(b, Pattern::Line { orientation: Orientation::Horizontal, position_pct: 5.0, width_pct: Some(2.5), tilt_deg: None });
         let b: Pattern = serde_json::from_str(r#"{"kind":"blank"}"#).unwrap();
         assert_eq!(b, Pattern::Blank);
     }

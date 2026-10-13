@@ -45,6 +45,8 @@ const READOUT_MS = 100;
 const PERSIST_MS = 300;
 /** Frames a remote calibration pattern stays on screen before it counts as shown. */
 const PATTERN_FRAMES = 2;
+/** Largest tilt a controller may set, degrees either way (the Tilt slider's range). */
+const MAX_TILT_DEG = 45;
 /** Default distance of the line from the camera field's edges in `fitToCameraField`, px. */
 const FIT_MARGIN_PX = 8;
 
@@ -290,6 +292,7 @@ export class LaserlineStore implements OnDestroy {
           setField: (polygon, label) => this.setCameraField(polygon, label),
           fitToField: (margin) => (this.cameraField() ? this.fitToCameraField(margin) : undefined),
           constrain: (polygon, label) => this.setConstraint(polygon, label),
+          setTilt: (deg) => this.setTilt(deg),
         },
         this.config.remote === true ? {} : this.config.remote,
       );
@@ -860,6 +863,18 @@ export class LaserlineStore implements OnDestroy {
     return this.clamped();
   }
 
+  /**
+   * Sets the line's tilt (degrees on top of its orientation, clamped to ±45) and returns the
+   * tilt kept, which a limit may have changed. During a calibration it applies when that ends.
+   */
+  setTilt(deg: number): number {
+    const tilt = Math.max(-MAX_TILT_DEG, Math.min(MAX_TILT_DEG, Number.isFinite(deg) ? deg : 0));
+    const p = this.params();
+    this.setParams({ ...p, line: { ...p.line, tilt_deg: tilt } });
+    this.setStatus(`Tilt set to ${tilt.toFixed(2)}°`);
+    return this.params().line.tilt_deg;
+  }
+
   /** `params` adjusted to keep the line inside `constraint`; as they are without one or before the view has a size. */
   private constrained(params: FullLaserParams): FullLaserParams {
     const area = this.constraint();
@@ -887,6 +902,7 @@ export class LaserlineStore implements OnDestroy {
       envelope: ready ? this.emu!.envelope(this.params(), w, h) : null,
       field: this.cameraField() ?? null,
       constraint: this.constraint() ?? null,
+      tilt_deg: this.params().line.tilt_deg,
     };
   }
 

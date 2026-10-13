@@ -374,6 +374,32 @@ describe('LaserlineStore windows', () => {
       s.ngOnDestroy();
     });
 
+    it('shows tilted lines and sets the user\'s tilt', async () => {
+      const { s, step, send, next, until, rendered } = await remoteStore('spec-remote-tilt');
+      step();
+      send({ type: 'hello' });
+      const host = (await next('status')).host;
+      send({ type: 'begin', to: host, session: 'cal' });
+      await until(() => s.calibrating());
+      send({ type: 'show', to: host, session: 'cal', id: 1, pattern: { kind: 'line', orientation: 'Horizontal', position_pct: 40, tilt_deg: 2.5 } });
+      await new Promise((r) => setTimeout(r, 20));
+      step();
+      expect((rendered.at(-1) as ReturnType<typeof s.params>).line.tilt_deg).toBe(2.5);
+      // A tilt set during the session is the user's, drawn once it ends.
+      send({ type: 'tilt', to: host, id: 2, tilt_deg: -1.5 });
+      expect((await next('tilted')).tilt_deg).toBe(-1.5);
+      expect(s.params().line.tilt_deg).toBe(-1.5);
+      send({ type: 'end', to: host, session: 'cal' });
+      await until(() => !s.calibrating());
+      step();
+      expect((rendered.at(-1) as ReturnType<typeof s.params>).line.tilt_deg).toBe(-1.5);
+      send({ type: 'tilt', to: host, id: 3, tilt_deg: 80 });
+      expect((await next('tilted')).tilt_deg).toBe(45);
+      let status = await next('status');
+      while (status.status.tilt_deg !== 45) status = await next('status');
+      s.ngOnDestroy();
+    });
+
     it('keeps the camera field and fits the line into it', async () => {
       const { s, step, send, next, until } = await remoteStore('spec-remote-3');
       step();

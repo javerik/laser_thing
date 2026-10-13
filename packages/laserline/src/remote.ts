@@ -23,6 +23,8 @@ export interface RemoteStatus {
   field: ViewPoint[] | null;
   /** The area the line is kept in, as last set by a controller (`constrain`). */
   constraint: ViewPoint[] | null;
+  /** The line's tilt in degrees on top of its orientation (the user's parameters). */
+  tilt_deg: number;
 }
 
 /**
@@ -36,7 +38,8 @@ export type ToLaserline =
   | { v: 1; type: 'end'; to: string; session: string }
   | { v: 1; type: 'camera-field'; to: string; polygon: ViewPoint[] | null; label?: string }
   | { v: 1; type: 'fit-to-field'; to: string; id: number; margin: number }
-  | { v: 1; type: 'constrain'; to: string; id: number; polygon: ViewPoint[] | null; label?: string };
+  | { v: 1; type: 'constrain'; to: string; id: number; polygon: ViewPoint[] | null; label?: string }
+  | { v: 1; type: 'tilt'; to: string; id: number; tilt_deg: number };
 
 /** Messages from a laserline window; `host` identifies it. */
 export type FromLaserline =
@@ -44,6 +47,7 @@ export type FromLaserline =
   | { v: 1; type: 'shown'; host: string; session: string; id: number; viewPx: ViewPoint }
   | { v: 1; type: 'fitted'; host: string; id: number; fits: boolean }
   | { v: 1; type: 'constrained'; host: string; id: number; clamped: string[] }
+  | { v: 1; type: 'tilted'; host: string; id: number; tilt_deg: number }
   | { v: 1; type: 'error'; host: string; session?: string; id?: number; message: string };
 
 /** What a {@link RemoteHost} drives: the emulator and its view, e.g. `LaserlineStore`. */
@@ -65,6 +69,8 @@ export interface RemoteTarget {
    * names of the parameters changed to fit (empty when none were, or on release).
    */
   constrain(polygon: ViewPoint[] | null, label: string | null): string[];
+  /** Set the user's line tilt (degrees, clamped to ±45); returns the tilt kept. */
+  setTilt(deg: number): number;
 }
 
 /** Options of {@link RemoteHost}. */
@@ -88,6 +94,9 @@ export interface RemoteHostOptions {
  *    `fit-to-field` fits the line into it.
  * 6. `constrain` → the window keeps the line, its motion, deformation and scan heights inside
  *    an area until released with `null`, answering `constrained` with what it had to change.
+ * 7. `tilt` → the window sets the user's line tilt (applied when a running session ends),
+ *    answering `tilted` with the tilt kept. A `line` pattern takes its own `tilt_deg`, so a
+ *    controller can find the tilt at which the camera sees the line level.
  *
  * Only one session runs at a time; a second `begin` gets an `error`.
  */
@@ -188,6 +197,12 @@ export class RemoteHost {
       case 'constrain': {
         const clamped = this.target.constrain(msg.polygon?.length ? msg.polygon : null, msg.label ?? null);
         this.post({ v: 1, type: 'constrained', host: this.id, id: msg.id, clamped });
+        this.postStatus();
+        break;
+      }
+      case 'tilt': {
+        const tilt_deg = this.target.setTilt(msg.tilt_deg);
+        this.post({ v: 1, type: 'tilted', host: this.id, id: msg.id, tilt_deg });
         this.postStatus();
         break;
       }
