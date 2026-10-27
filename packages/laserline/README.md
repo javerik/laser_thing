@@ -88,6 +88,7 @@ preset JSON files.
 | `actionForKey`, `SHORTCUTS`, `shortcutHelp` | Keyboard shortcuts |
 | `RemoteHost`, `ToLaserline`, `FromLaserline`, `REMOTE_CHANNEL` | Let another page drive the line (camera calibration), see below |
 | `Emulator.envelope`, `Emulator.fitInto`, `calibrationParams`, `patternParams` | The line's envelope over its whole motion; fitting it into a camera field; calibration patterns |
+| `Emulator.metric`, `RemoteMetric` | How the line maps the scan's mm into view px, and the travel speed |
 | `readFileBytes`, `downloadBytes` | File helpers |
 
 ### Remote control (camera calibration)
@@ -99,7 +100,7 @@ view's drawing buffer, y down).
 
 | To laserline | Answer |
 |---|---|
-| `hello` | `status` from every window: `host` id, `viewPx`, the user's line `envelope`, `session`, `field`, `constraint`, the user's `tilt_deg` |
+| `hello` | `status` from every window: `host` id, `viewPx`, the user's line `envelope`, `session`, `field`, `constraint`, the user's `tilt_deg`, the `metric` mapping (below) |
 | `begin { to, session }` | `status`; the user's parameters are kept aside, the view goes blank and pauses. A second session gets `error`. |
 | `show { to, session, id, pattern }` | `shown { id, viewPx }` once the pattern has been on screen for a frame: `{ kind: 'blank' }`; `{ kind: 'line', orientation, position_pct, width_pct?, tilt_deg? }` (a line across the view, or a band `width_pct` of the view wide, turned by `tilt_deg` about its centre); `{ kind: 'white' }`; or `{ kind: 'stripes', orientation, bit, inverted? }`, bit `bit` of a Gray code of the view's columns (`Vertical`) or rows, white on black (`stripeLit`, `drawOverlayPattern`). White and stripes are drawn over the view; from all bits a camera pixel decodes the view position it sees |
 | `end { to, session }` | `status`; parameters and playback come back. A session also ends after 15 s without messages. |
@@ -109,6 +110,23 @@ view's drawing buffer, y down).
 | `tilt { to, id, tilt_deg }` | `tilted { id, tilt_deg }` with the tilt kept (clamped to ±45°) after setting it as the user's line tilt; during a session it applies when the session ends |
 
 The live view must stay visible: hidden windows get no animation frames, so no `shown`.
+
+`status.metric` (`RemoteMetric`, `null` without a scan, with the scan disabled or before the
+first frame) tells a controller how the user's line shows the scan, so it can turn what its
+camera measures into the scan's millimetres (u along the line, v the travel, z the height):
+
+- `base { center_px, dir, normal }`: the line at rest (no motion) and height 0. A view point `p`
+  is `u = u0_mm + (p − center_px)·dir ÷ along_px_per_mm` and `z = (p − center_px)·normal ÷
+  height_px_per_mm`; `height_px_per_mm` is signed (positive with *invert height*).
+- `dv_mm` of travel per scan row, `rows`, and `travel { mode, rows_per_s, mm_per_s, approximate,
+  playing, end }`: `per_second` plays `profiles_per_s × time_scale` rows/s; `per_frame` a row per
+  frame, at the measured frame rate (`approximate`).
+- `object_mm { min, max }`: the object's (u, v, z) extent without the margins (`null` if nothing
+  rises above 1e-3 mm); `model_mirrored`: the slice settings make the scan a mirror image of the
+  model.
+- `disturbances`: what makes it unreliable: `motion`, `bounce`, `once`, `paused`, `noise`, `flat`.
+- `rev` changes whenever another field does, not with frame-rate jitter (in `per_frame` mode the
+  rate is held until it moves by more than 1 %). During a session it stays the user's line.
 
 For Angular components, see `@javerik/laserline-angular`.
 

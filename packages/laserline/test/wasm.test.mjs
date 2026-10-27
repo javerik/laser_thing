@@ -203,3 +203,21 @@ test('calibration helpers', () => {
   assert.deepEqual(emu.constrainInto(p, [[0, 0], [1000, 0], [1000, 500], [0, 500]], 1000, 500).clamped, []);
   emu.free();
 });
+
+test('metric mapping of the scan being played', () => {
+  const e = new ll.Emulator(undefined);
+  assert.equal(e.metric(e.params, 1000, 500, 60, true), null, 'no scan');
+  const scan = ll.slice(ll.Mesh.parseStl(boxStl([0, 0, 0], [20, 10, 8])), { lateral_res_mm: 1, travel_step_mm: 0.5, margin_lateral_mm: 5, occlusion: false }, '');
+  e.setScan(scan);
+  const m = e.metric(e.params, 1000, 500, 60, true);
+  assert.deepEqual(m.base, { center_px: [500, 250], dir: [1, 0], normal: [-0, 1] });
+  assert.ok(Math.abs(m.along_px_per_mm - 800 / 30) < 1e-4);
+  assert.equal(m.height_px_per_mm, -m.along_px_per_mm);
+  assert.deepEqual([m.dv_mm, m.rows, m.travel.mode, m.travel.mm_per_s], [0.5, scan.rows, 'per_frame', 30]);
+  assert.deepEqual(m.object_mm, { min: [-10, 0, 8], max: [10, 10, 8] });
+  assert.deepEqual([m.model_mirrored, m.disturbances], [false, []]);
+  const off = { ...e.params, scan: { ...e.params.scan, enabled: false } };
+  assert.equal(e.metric(off, 1000, 500, 60, true), null, 'scan disabled');
+  e.clearScan();
+  assert.equal(e.metric(e.params, 1000, 500, 60, true), null);
+});

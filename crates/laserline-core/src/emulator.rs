@@ -4,7 +4,7 @@
 
 use crate::gpu_types::{DEFORM_SAMPLES, Uniforms};
 use crate::model;
-use crate::params::{DeformKind, LaserParams, LengthUnit, RateMode};
+use crate::params::{DeformKind, LaserParams, RateMode};
 use crate::scan::{self, DisplayMapping, Scan};
 use serde::Serialize;
 use std::sync::Arc;
@@ -137,11 +137,7 @@ impl Emulator {
         let normal = [-dir[1], dir[0]];
 
         let extent_along = model::extent_along(size, dir);
-        let mut length_px = match p.line.length_unit {
-            LengthUnit::Pixels => p.line.length,
-            LengthUnit::Percent => p.line.length / 100.0 * extent_along,
-        }
-        .max(0.0);
+        let mut length_px = model::line_length_px(&p.line, size);
 
         // A driving scan sets the scale along the line; in fixed mode also the length.
         let active_scan = self.scan.as_ref().filter(|_| p.scan.enabled);

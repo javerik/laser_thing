@@ -4,9 +4,12 @@ import {
   type DetachedViewOptions,
   type FromLaserline,
   type LaserView,
+  type RemoteStatus,
   type ToLaserline,
+  Mesh,
   init,
   profileCurve,
+  slice,
 } from '@javerik/laserline';
 import { readFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
@@ -290,13 +293,15 @@ describe('LaserlineStore windows', () => {
     async function remoteStore(name: string) {
       const s = await store('test.', { remote: { channel: name } });
       const rendered: unknown[] = [];
+      let viewPx = VIEW;
       const view = {
         backend: 'fake',
         render: (emu: { params: unknown }) => {
           rendered.push(emu.params);
-          return { view_px: VIEW, center_px: [500, 250], offset_px: 0, length_px: 800, extent_along_px: 1000 };
+          return { view_px: viewPx, center_px: [500, 250], offset_px: 0, length_px: 800, extent_along_px: 1000 };
         },
       } as unknown as LaserView;
+      const resize = (px: number[]) => (viewPx = px);
       s.attachLaserView(view);
       const step = () => (s as unknown as { frame(dt: number): void }).frame(0.016);
       const ch = new BroadcastChannel(name);
@@ -317,7 +322,7 @@ describe('LaserlineStore windows', () => {
         for (let i = 0; i < 200 && !cond(); i++) await new Promise((r) => setTimeout(r, 5));
         expect(cond()).toBe(true);
       };
-      return { s, step, send, next, until, rendered };
+      return { s, step, send, next, until, rendered, resize };
     }
 
     it('reports the view and the envelope of the user\'s line', async () => {
@@ -416,6 +421,84 @@ describe('LaserlineStore windows', () => {
       expect(s.params().line.position_pct[0]).toBeCloseTo(55, 1);
       s.setCameraField(undefined);
       expect(localStorage.getItem('test.camera_field')).toBeNull();
+      s.ngOnDestroy();
+    });
+
+    /** An ASCII STL of the box `lo`..`hi`. */
+    function boxStl(lo: number[], hi: number[]): Uint8Array {
+      const c = (i: number) => [0, 1, 2].map((k) => ((i >> k) & 1 ? hi[k] : lo[k]));
+      const quads = [[0, 1, 3, 2], [4, 6, 7, 5], [0, 4, 5, 1], [2, 3, 7, 6], [0, 2, 6, 4], [1, 5, 7, 3]];
+      const facet = (a: number, b: number, d: number) =>
+        `facet normal 0 0 0\nouter loop\n${[a, b, d].map((i) => `vertex ${c(i).join(' ')}`).join('\n')}\nendloop\nendfacet`;
+      const text = `solid box\n${quads.flatMap((q) => [facet(q[0], q[1], q[2]), facet(q[0], q[2], q[3])]).join('\n')}\nendsolid box\n`;
+      return new TextEncoder().encode(text);
+    }
+
+    /** Plays a 20 × 10 × 8 mm box sliced with 5 mm margins: 30 mm wide. */
+    async function loadBox(s: LaserlineStore): Promise<void> {
+      const settings = { lateral_res_mm: 1, travel_step_mm: 0.5, margin_lateral_mm: 5, occlusion: false };
+      const scan = slice(Mesh.parseStl(boxStl([0, 0, 0], [20, 10, 8])), settings, 'box.stl');
+      await s.loadScan(new File([scan.toBytes() as Uint8Array<ArrayBuffer>], 'box.lscan'));
+      expect(s.scan()).toBeDefined();
+    }
+
+    it('publishes the metric mapping of the user\'s line with a revision', async () => {
+      const { s, step, resize } = await remoteStore('spec-remote-metric');
+      const status = () => (s as unknown as { remoteStatus(): RemoteStatus }).remoteStatus();
+      step();
+      expect(status().metric).toBeNull();
+      await loadBox(s);
+      const first = status().metric!;
+      // FitLine over 80 % of the 1000 px wide view.
+      expect(first.along_px_per_mm).toBeCloseTo(800 / 30, 4);
+      expect(first.base.center_px).toEqual([500, 250]);
+      expect(status().metric!.rev).toBe(first.rev);
+      // A scale change.
+      s.patchParams({ line: { ...s.params().line, length: 60 } });
+      const scaled = status().metric!;
+      expect(scaled.rev).toBeGreaterThan(first.rev);
+      expect(scaled.along_px_per_mm).toBeCloseTo(600 / 30, 4);
+      // A resize, with a percent length.
+      resize([1200, 500]);
+      step();
+      const resized = status().metric!;
+      expect(resized.rev).toBeGreaterThan(scaled.rev);
+      expect(resized.along_px_per_mm).toBeCloseTo(720 / 30, 4);
+      // Per frame: the row rate is the frame rate, held through jitter under 1 %.
+      s.fps.set(60);
+      const timed = status().metric!;
+      expect(timed.travel).toMatchObject({ mode: 'per_frame', rows_per_s: 60, mm_per_s: 30, approximate: true });
+      s.fps.set(60.5);
+      expect(status().metric!.rev).toBe(timed.rev);
+      expect(status().metric!.travel.rows_per_s).toBe(60);
+      s.fps.set(59.2);
+      expect(status().metric!.rev).toBeGreaterThan(timed.rev);
+      expect(status().metric!.travel.rows_per_s).toBeCloseTo(59.2, 4);
+      s.setPlaying(false);
+      expect(status().metric!.disturbances).toEqual(['paused']);
+      s.setPlaying(true);
+      s.ngOnDestroy();
+    });
+
+    it('keeps the user\'s metric during a calibration session', async () => {
+      const { s, step, send, next, until } = await remoteStore('spec-remote-metric-session');
+      step();
+      await loadBox(s);
+      const status = () => (s as unknown as { remoteStatus(): RemoteStatus }).remoteStatus();
+      const before = status().metric!;
+      send({ type: 'hello' });
+      const host = (await next('status')).host;
+      send({ type: 'begin', to: host, session: 'cal' });
+      await until(() => s.calibrating());
+      send({ type: 'show', to: host, session: 'cal', id: 1, pattern: { kind: 'line', orientation: 'Vertical', position_pct: 30 } });
+      await new Promise((r) => setTimeout(r, 20));
+      step();
+      step();
+      await next('shown');
+      expect(status().metric).toEqual(before);
+      send({ type: 'end', to: host, session: 'cal' });
+      await until(() => !s.calibrating());
+      expect(status().metric).toEqual(before);
       s.ngOnDestroy();
     });
 

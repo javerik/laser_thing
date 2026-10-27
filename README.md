@@ -11,7 +11,9 @@ profiles such a sensor would measure. Runs natively (egui) and in the browser
   the line. Scans save as `.lscan` files.
 - **Camera calibration** (web): another page of the same origin can drive the line over a
   `BroadcastChannel` to calibrate a camera filming the screen, then outline the camera's
-  field and fit the line into it (`RemoteHost`, see `packages/laserline/README.md`).
+  field and fit the line into it (`RemoteHost`, see `packages/laserline/README.md`). Its
+  status says how the line maps a scan's millimetres into view pixels and how fast the scan
+  travels, so the camera's measurements can be made metric.
 
 ## Layout
 

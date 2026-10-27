@@ -37,6 +37,7 @@ export {
   RemoteHost,
   type FromLaserline,
   type RemoteHostOptions,
+  type RemoteMetric,
   type RemoteStatus,
   type RemoteTarget,
   type ToLaserline,

@@ -6,6 +6,7 @@ pub mod camera;
 pub mod emulator;
 pub mod gpu_types;
 pub mod mesh;
+pub mod metric;
 pub mod model;
 pub mod params;
 pub mod presets;

@@ -1,4 +1,4 @@
-import type { Envelope } from '../wasm/laserline.js';
+import type { Envelope, MetricMapping } from '../wasm/laserline.js';
 import type { RemotePattern } from './pattern.js';
 
 /** Default `BroadcastChannel` name of the remote protocol. */
@@ -10,6 +10,17 @@ export const REMOTE_IDLE_MS = 15_000;
 
 /** A point in view pixels (the live view's drawing buffer, y down). */
 export type ViewPoint = [number, number];
+
+/**
+ * How the user's line maps the loaded scan into view px and how fast it travels
+ * (`Emulator.metric`), with a revision: `rev` changes whenever any other field does, but not
+ * with frame-rate jitter (in `per_frame` mode the rate is held until it moves by more than 1 %).
+ * During a calibration session it stays the user's line, not the pattern shown.
+ */
+export type RemoteMetric = MetricMapping & {
+  /** Changes with every change of the mapping; starts at 1. */
+  rev: number;
+};
 
 /** What a laserline window reports about itself, see {@link RemoteHost}. */
 export interface RemoteStatus {
@@ -25,6 +36,11 @@ export interface RemoteStatus {
   constraint: ViewPoint[] | null;
   /** The line's tilt in degrees on top of its orientation (the user's parameters). */
   tilt_deg: number;
+  /**
+   * The metric mapping of the user's line; `null` without a scan, with the scan disabled or
+   * before the first frame. Missing from a laserline that can't publish it.
+   */
+  metric?: RemoteMetric | null;
 }
 
 /**
@@ -97,6 +113,9 @@ export interface RemoteHostOptions {
  * 7. `tilt` → the window sets the user's line tilt (applied when a running session ends),
  *    answering `tilted` with the tilt kept. A `line` pattern takes its own `tilt_deg`, so a
  *    controller can find the tilt at which the camera sees the line level.
+ *
+ * Every status carries the line's `metric` mapping (view px per mm of the scan, the base
+ * line, the travel speed), so a controller can turn what its camera measures into mm.
  *
  * Only one session runs at a time; a second `begin` gets an `error`.
  */

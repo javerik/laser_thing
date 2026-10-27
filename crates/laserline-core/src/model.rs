@@ -4,8 +4,8 @@
 //! `profile_intensity`; deformation is sampled here and uploaded to the GPU.
 
 use crate::params::{
-    ColorMode, ColorParams, DeformKind, DeformParams, LineParams, MotionKind, MotionParams,
-    Orientation, ProfileKind, ProfileParams, SweepMode,
+    ColorMode, ColorParams, DeformKind, DeformParams, LengthUnit, LineParams, MotionKind,
+    MotionParams, Orientation, ProfileKind, ProfileParams, SweepMode,
 };
 use std::f32::consts::TAU;
 
@@ -24,6 +24,17 @@ pub fn line_angle(line: &LineParams) -> f32 {
 /// Extent of a `w`×`h` rectangle projected onto the unit vector `axis`.
 pub fn extent_along(size: [f32; 2], axis: [f32; 2]) -> f32 {
     size[0] * axis[0].abs() + size[1] * axis[1].abs()
+}
+
+/// Configured line length in px in a view of `view_px` (a percent length is of the view's
+/// extent along the line). A scan in `Fixed` mode replaces it (see `scan::display_mapping`).
+pub fn line_length_px(line: &LineParams, view_px: [f32; 2]) -> f32 {
+    let angle = line_angle(line);
+    match line.length_unit {
+        LengthUnit::Pixels => line.length,
+        LengthUnit::Percent => line.length / 100.0 * extent_along(view_px, [angle.cos(), angle.sin()]),
+    }
+    .max(0.0)
 }
 
 /// Displacement of the line perpendicular to itself at time `t` (seconds).

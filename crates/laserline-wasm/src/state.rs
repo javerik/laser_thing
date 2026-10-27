@@ -2,7 +2,7 @@
 
 use crate::data::{Bounds, GridInfo, Mesh, Scan};
 use crate::{from_js, to_js};
-use laserline_core::{calibration, emulator, scan, slicer};
+use laserline_core::{calibration, emulator, metric, scan, slicer};
 use serde::Serialize;
 use wasm_bindgen::prelude::*;
 
@@ -11,6 +11,8 @@ use wasm_bindgen::prelude::*;
 #[wasm_bindgen]
 pub struct Emulator {
     pub(crate) inner: emulator::Emulator,
+    /// `Scan::object_bounds` of `inner.scan`, worked out once per scan for `metric`.
+    object: Option<scan::ObjectBounds>,
 }
 
 #[wasm_bindgen]
@@ -19,7 +21,7 @@ impl Emulator {
     #[wasm_bindgen(constructor)]
     pub fn new(#[wasm_bindgen(unchecked_param_type = "LaserParams | undefined")] params: JsValue) -> Result<Emulator, JsError> {
         let params = if params.is_undefined() || params.is_null() { Default::default() } else { from_js(params)? };
-        Ok(Emulator { inner: emulator::Emulator::new(params) })
+        Ok(Emulator { inner: emulator::Emulator::new(params), object: None })
     }
 
     /// All line parameters (a copy; assign to change them).
@@ -103,6 +105,7 @@ impl Emulator {
     /// Plays `scan`, keeping the playback position.
     #[wasm_bindgen(js_name = setScan)]
     pub fn set_scan(&mut self, scan: &Scan) {
+        self.object = scan.inner.object_bounds();
         self.inner.set_scan(scan.inner.clone());
     }
 
@@ -110,6 +113,7 @@ impl Emulator {
     #[wasm_bindgen(js_name = clearScan)]
     pub fn clear_scan(&mut self) {
         self.inner.scan = None;
+        self.object = None;
     }
 
     /// The scan being played, if any.
@@ -129,6 +133,25 @@ impl Emulator {
     ) -> Result<JsValue, JsError> {
         let params = from_js(params)?;
         Ok(to_js(&calibration::line_envelope(&params, [view_w, view_h], self.inner.scan.as_deref())))
+    }
+
+    /// How the line drawn with `params` in a `viewW`×`viewH` px view maps the scan being
+    /// played into view px, and how fast it travels; `null` without a scan or with
+    /// `params.scan.enabled` off. `fps` is the measured frame rate (the row rate when a row
+    /// is played per frame), `playing` whether the playback runs. Pass the user's parameters,
+    /// not a calibration pattern's.
+    #[wasm_bindgen(unchecked_return_type = "MetricMapping | null")]
+    pub fn metric(
+        &self,
+        #[wasm_bindgen(unchecked_param_type = "LaserParams")] params: JsValue,
+        #[wasm_bindgen(js_name = viewW)] view_w: f32,
+        #[wasm_bindgen(js_name = viewH)] view_h: f32,
+        fps: f32,
+        playing: bool,
+    ) -> Result<JsValue, JsError> {
+        let params = from_js(params)?;
+        let scan = self.inner.scan.as_deref().map(|s| (s, self.object.as_ref()));
+        Ok(metric::metric_mapping(&params, [view_w, view_h], scan, fps, playing).map_or(JsValue::NULL, |m| to_js(&m)))
     }
 
     /// `params` moved into the middle of the convex `field` (view px corners) and, where

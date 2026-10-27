@@ -230,6 +230,38 @@ impl Scan {
     pub fn u_center_mm(&self) -> f32 {
         self.meta.u0_mm + 0.5 * self.width_mm()
     }
+    /// Bounds of the object: cell centres with a finite height above
+    /// [`OBJECT_MIN_HEIGHT_MM`], in scan-frame mm. `None` when no cell rises that high
+    /// (only the base plane, or nothing hit).
+    pub fn object_bounds(&self) -> Option<ObjectBounds> {
+        let m = &self.meta;
+        let mut lo = [f32::INFINITY; 3];
+        let mut hi = [f32::NEG_INFINITY; 3];
+        for (k, &h) in self.height.iter().enumerate() {
+            if !(h.is_finite() && h > OBJECT_MIN_HEIGHT_MM) {
+                continue;
+            }
+            let p = [m.u0_mm + (k % m.cols) as f32 * m.du_mm, m.v0_mm + (k / m.cols) as f32 * m.dv_mm, h];
+            for a in 0..3 {
+                lo[a] = lo[a].min(p[a]);
+                hi[a] = hi[a].max(p[a]);
+            }
+        }
+        lo[0].is_finite().then_some(ObjectBounds { min: lo, max: hi })
+    }
+}
+
+/// Heights up to this (mm) count as the base, not the object, in [`Scan::object_bounds`].
+pub const OBJECT_MIN_HEIGHT_MM: f32 = 1e-3;
+
+/// An axis-aligned box in scan-frame mm: (u along the line, v along the travel, z up).
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "wasm", derive(tsify::Tsify))]
+pub struct ObjectBounds {
+    /// Smallest (u, v, z).
+    pub min: [f32; 3],
+    /// Largest (u, v, z).
+    pub max: [f32; 3],
 }
 
 /// Grid dimensions `(cols, rows)` the settings would produce for an object with
@@ -717,6 +749,21 @@ mod tests {
         let p = ScanParams { scale: ScanScale::Fixed, px_per_mm: 2.0, height_gain: HeightGain::Manual, height_px_per_mm: 7.0, ..ScanParams::default() };
         let (m, len) = display_mapping(&scan, &p, 500.0);
         assert_eq!((m.px_per_mm, len, m.height_px_per_mm), (2.0, 200.0, 7.0));
+    }
+
+    #[test]
+    fn object_bounds_of_a_box() {
+        // 20 wide, 10 long, 8 high; 5 mm margins, 1 mm grid, centred in u.
+        let m = box_mesh([0.0; 3], [20.0, 10.0, 8.0]);
+        let scan = run(&m, &flat(SliceSettings::default()));
+        let b = scan.object_bounds().unwrap();
+        assert_eq!(b.min, [-10.0, 0.0, 8.0]);
+        assert_eq!(b.max, [10.0, 10.0, 8.0]);
+        // Without the base plane the empty cells are NaN: the same box.
+        let scan = run(&m, &flat(SliceSettings { base_plane: false, ..Default::default() }));
+        assert_eq!(scan.object_bounds(), Some(b));
+        // A flat scan has no object.
+        assert_eq!(row_scan(&[0.0, 0.0005, f32::NAN], &[1, 1, 1]).object_bounds(), None);
     }
 
     #[test]

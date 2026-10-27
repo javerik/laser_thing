@@ -58,11 +58,7 @@ pub fn line_envelope(params: &LaserParams, view_px: [f32; 2], scan: Option<&Scan
     let dir = [angle.cos(), angle.sin()];
     let normal = [-dir[1], dir[0]];
 
-    let mut length = match p.line.length_unit {
-        LengthUnit::Pixels => p.line.length,
-        LengthUnit::Percent => p.line.length / 100.0 * model::extent_along(view_px, dir),
-    }
-    .max(0.0);
+    let mut length = model::line_length_px(&p.line, view_px);
     let active_scan = scan.filter(|_| p.scan.enabled);
     let shape = match active_scan {
         Some(s) => {

@@ -15,6 +15,7 @@ import {
   type Preset,
   type RemotePattern,
   RemoteHost,
+  type RemoteMetric,
   type RemoteStatus,
   Scan,
   SliceRunner,
@@ -49,6 +50,8 @@ const PATTERN_FRAMES = 2;
 const MAX_TILT_DEG = 45;
 /** Default distance of the line from the camera field's edges in `fitToCameraField`, px. */
 const FIT_MARGIN_PX = 8;
+/** In `per_frame` playback the metric's row rate follows the frame rate only when it moves by more than this share. */
+const METRIC_FPS_HOLD = 0.01;
 
 /** Where the controls are shown; see {@link LaserlineStore.controls}. */
 export type ControlsPlacement = 'docked' | 'detached' | 'hidden';
@@ -201,6 +204,11 @@ export class LaserlineStore implements OnDestroy {
   private calibrationBase?: FullLaserParams;
   private pendingPattern?: { rendered: () => void; frames: number };
   private viewPx: ViewPoint = [0, 0];
+  /** Revision of the metric mapping in the status, and the mapping it was counted for (JSON). */
+  private metricRev = 0;
+  private metricText = '';
+  /** Frame rate the metric uses as `per_frame` row rate, held while `fps` moves by under {@link METRIC_FPS_HOLD}. */
+  private metricFps = 0;
   private readonly syncWindows = () => {
     const popup = this.detached;
     // A hidden window gets no animation frames: follow one being looked at, preferring
@@ -903,7 +911,28 @@ export class LaserlineStore implements OnDestroy {
       field: this.cameraField() ?? null,
       constraint: this.constraint() ?? null,
       tilt_deg: this.params().line.tilt_deg,
+      metric: ready ? this.metric(w, h) : null,
     };
+  }
+
+  /**
+   * The metric mapping of the user's line (never the emulator's: during a calibration its
+   * parameters are the pattern's) in a `w`×`h` view, with `rev` bumped whenever it changed.
+   */
+  private metric(w: number, h: number): RemoteMetric | null {
+    const params = this.params();
+    const fps = this.fps();
+    if (params.scan.rate === 'PerFrame' && Math.abs(fps - this.metricFps) > METRIC_FPS_HOLD * this.metricFps) {
+      this.metricFps = fps;
+    }
+    const metric = this.emu!.metric(params, w, h, this.metricFps, this.playing());
+    if (!metric) return null;
+    const text = JSON.stringify(metric);
+    if (text !== this.metricText) {
+      this.metricText = text;
+      this.metricRev++;
+    }
+    return { ...metric, rev: this.metricRev };
   }
 
   private beginCalibration(): void {

@@ -168,6 +168,20 @@ pub fn to_scan_frame(mesh: &Mesh, s: &SliceSettings) -> Vec<[f32; 3]> {
     pts
 }
 
+/// Whether [`to_scan_frame`] turns the model into its mirror image: the determinant of its
+/// axis mapping (model axes → u, v, z with their signs) is negative. Yaw is a rotation and
+/// the scale is positive, so neither changes it.
+pub fn scan_frame_mirrored(s: &SliceSettings) -> bool {
+    let (up, up_sign) = s.up_axis.index_sign();
+    let travel = s.travel_axis_index();
+    let along = 3 - up - travel;
+    // Sign of the permutation (along, travel, up) of (0, 1, 2).
+    let even = matches!((along, travel, up), (0, 1, 2) | (1, 2, 0) | (2, 0, 1));
+    let along_sign = if s.flip_along { -1.0 } else { 1.0 };
+    let det = if even { 1.0 } else { -1.0 } * along_sign * up_sign;
+    det < 0.0
+}
+
 impl UpAxis {
     /// Model axis index and sign that become scan-frame +z.
     pub fn index_sign(self) -> (usize, f32) {
@@ -260,5 +274,32 @@ mod tests {
         let (lo, hi) = bounds(&to_scan_frame(&m, &s));
         assert!((hi[0] - lo[0] - 20.0).abs() < 1e-3);
         assert!((hi[1] - lo[1] - 10.0).abs() < 1e-3);
+    }
+
+    /// The determinant of the transform `to_scan_frame` actually applies, from where it
+    /// sends the unit vectors (differences cancel the shift).
+    fn applied_det(s: &SliceSettings) -> f32 {
+        let m = Mesh { vertices: vec![[0.0; 3], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]], triangles: vec![] };
+        let p = to_scan_frame(&m, s);
+        let col = |k: usize| [p[k][0] - p[0][0], p[k][1] - p[0][1], p[k][2] - p[0][2]];
+        let (a, b, c) = (col(1), col(2), col(3));
+        a[0] * (b[1] * c[2] - b[2] * c[1]) - b[0] * (a[1] * c[2] - a[2] * c[1]) + c[0] * (a[1] * b[2] - a[2] * b[1])
+    }
+
+    #[test]
+    fn mirrored_scan_frames() {
+        let cases = [
+            (SliceSettings::default(), false),
+            (SliceSettings { travel_axis: Axis::X, ..Default::default() }, true),
+            (SliceSettings { flip_along: true, ..Default::default() }, true),
+            (SliceSettings { travel_axis: Axis::X, flip_along: true, ..Default::default() }, false),
+            (SliceSettings { up_axis: UpAxis::NegZ, ..Default::default() }, true),
+            (SliceSettings { up_axis: UpAxis::PosY, travel_axis: Axis::Z, ..Default::default() }, true),
+            (SliceSettings { up_axis: UpAxis::PosY, travel_axis: Axis::X, yaw_deg: 30.0, ..Default::default() }, false),
+        ];
+        for (s, mirrored) in cases {
+            assert_eq!(scan_frame_mirrored(&s), mirrored, "{s:?}");
+            assert_eq!(applied_det(&s) < 0.0, mirrored, "{s:?}");
+        }
     }
 }

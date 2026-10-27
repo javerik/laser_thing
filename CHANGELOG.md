@@ -52,6 +52,13 @@
   `tilt { tilt_deg }` (answered with `tilted { tilt_deg }`, clamped to ±45°) sets the user's
   line tilt, applied when a running session ends. `status.tilt_deg` reports it. JS:
   `RemoteTarget.setTilt`, `LaserlineStore.setTilt()`.
+- Laserline publishes its metric mapping: `status.metric` (`RemoteMetric`) holds the base line, view px
+  per mm along the line and in height (signed), the u at its centre, the travel per row and its speed
+  (`per_second` exact, `per_frame` from the measured frame rate), the object's extent, whether the scan
+  mirrors the model, and what disturbs it (`motion`, `bounce`, `once`, `paused`, `noise`, `flat`), with a
+  `rev` that changes with it but not with frame-rate jitter. It always describes the user's line, also
+  during a calibration session. Core: `laserline_core::metric` (`metric_mapping`), `Scan::object_bounds`,
+  `mesh::scan_frame_mirrored`, `model::line_length_px`; JS: `Emulator.metric`.
 - The default laser colour is white (`ColorParams` defaults to `Custom` 1,1,1); the coloured
   presets set their wavelength. Calibration lines are white.
 - Every public Rust item and every TypeScript export is documented; `missing_docs` and

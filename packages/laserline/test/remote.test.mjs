@@ -175,3 +175,39 @@ test('setting the line tilt', async () => {
   assert.equal((await c.next('tilted')).tilt_deg, 45);
   assert.deepEqual(target.calls, [['tilt', 1.25], ['tilt', 60]]);
 });
+
+test('the metric mapping passes through, and a new revision is sent', async () => {
+  const name = 'remote-test-metric';
+  const target = fakeTarget();
+  const metric = {
+    rev: 1,
+    base: { center_px: [400, 300], dir: [1, 0], normal: [0, 1] },
+    along_px_per_mm: 20,
+    height_px_per_mm: -20,
+    u0_mm: 0,
+    dv_mm: 0.5,
+    rows: 41,
+    travel: { mode: 'per_second', rows_per_s: 60, mm_per_s: 30, approximate: false, playing: true, end: 'loop' },
+    object_mm: { min: [-10, 0, 8], max: [10, 10, 8] },
+    model_mirrored: false,
+    disturbances: [],
+  };
+  target.metric = metric;
+  const status = target.status.bind(target);
+  target.status = function () {
+    return { ...status(), metric: this.metric };
+  };
+  const h = host(target, { channel: name });
+  const c = controller(name);
+  c.send({ type: 'hello' });
+  assert.deepEqual((await c.next('status')).status.metric, metric);
+  h.postStatus();
+  await new Promise((r) => setTimeout(r, 20));
+  assert.equal(c.got.filter((m) => m.type === 'status').length, 0, 'unchanged: not resent');
+  target.metric = { ...metric, rev: 2, along_px_per_mm: 25 };
+  h.postStatus();
+  assert.equal((await c.next('status')).status.metric.rev, 2);
+  target.metric = null;
+  h.postStatus();
+  assert.equal((await c.next('status')).status.metric, null);
+});
