@@ -3,6 +3,8 @@
 ## Unreleased
 
 ### Added
+- `models/l-block.stl`: a stepped, asymmetric L with known dimensions (`models/README.md`)
+  for checking a metric scan against its model.
 - Split into libraries and apps: `laserline-core`, `laserline-render`, `laserline-egui`
   (crates.io), `@javerik/laserline` and `@javerik/laserline-angular` (npm), the native
   `laserline-desktop` app and the `laserline-web` Angular app.
